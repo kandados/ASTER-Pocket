@@ -1,40 +1,51 @@
 #include <Arduino.h>
 #include <WiFi.h>
-#include <HTTPClient.h>
 
 #include "drivers/display/AsterDisplay.h"
+#include "core/CoreClient.h"
 #include "secrets.h"
 
 
-static constexpr unsigned long WIFI_TIMEOUT_MS = 20000;
-static constexpr unsigned long CORE_TIMEOUT_MS = 10000;
+static constexpr uint32_t WIFI_TIMEOUT_MS =
+    20000;
 
 
 // ---------------------------------------------------------
-// Conectar al Wi-Fi del homelab
+// Wi-Fi
 // ---------------------------------------------------------
 
 static bool connectWiFi()
 {
-    Serial.println();
-    Serial.println("[Pocket] Conectando a Wi-Fi...");
-    Serial.print("[Pocket] SSID: ");
-    Serial.println(ASTER_WIFI_SSID);
+    Serial.println(
+        "[Pocket] Conectando a Cudy-Homelab..."
+    );
+
 
     AsterDisplay.showStatus(
         "ASTY",
         "Conectando\nWi-Fi..."
     );
 
-    WiFi.mode(WIFI_STA);
-    WiFi.setSleep(false);
+
+    WiFi.mode(
+        WIFI_STA
+    );
+
+
+    WiFi.setSleep(
+        false
+    );
+
 
     WiFi.begin(
         ASTER_WIFI_SSID,
         ASTER_WIFI_PASSWORD
     );
 
-    const unsigned long start = millis();
+
+    const uint32_t start =
+        millis();
+
 
     while (
         WiFi.status() != WL_CONNECTED &&
@@ -42,127 +53,69 @@ static bool connectWiFi()
     )
     {
         AsterDisplay.update();
-        delay(100);
+
+        delay(
+            50
+        );
     }
 
-    if (WiFi.status() != WL_CONNECTED)
-    {
-        Serial.println();
-        Serial.println("[Pocket] ERROR conectando al Wi-Fi.");
 
-        Serial.print("[Pocket] WiFi.status(): ");
-        Serial.println(WiFi.status());
+    if (
+        WiFi.status() != WL_CONNECTED
+    )
+    {
+        Serial.println(
+            "[Pocket] ERROR Wi-Fi."
+        );
+
 
         AsterDisplay.showStatus(
             "ASTY",
             "Error\nWi-Fi"
         );
 
+
         return false;
     }
 
-    Serial.println();
-    Serial.println("[Pocket] Wi-Fi conectado.");
 
-    Serial.print("[Pocket] IP Pocket: ");
-    Serial.println(WiFi.localIP());
+    Serial.println(
+        "[Pocket] Wi-Fi conectado."
+    );
 
-    Serial.print("[Pocket] RSSI: ");
-    Serial.print(WiFi.RSSI());
-    Serial.println(" dBm");
 
-    Serial.print("[Pocket] Gateway: ");
-    Serial.println(WiFi.gatewayIP());
+    Serial.print(
+        "[Pocket] IP: "
+    );
+
+    Serial.println(
+        WiFi.localIP()
+    );
+
+
+    Serial.print(
+        "[Pocket] RSSI: "
+    );
+
+    Serial.print(
+        WiFi.RSSI()
+    );
+
+    Serial.println(
+        " dBm"
+    );
+
 
     AsterDisplay.showStatus(
         "ASTY",
         "Wi-Fi\nconectado"
     );
 
-    delay(1200);
 
-    return true;
-}
-
-
-// ---------------------------------------------------------
-// Comprobar Core
-// ---------------------------------------------------------
-
-static bool checkCore()
-{
-    Serial.println();
-    Serial.println("[Pocket] Buscando A.S.T.E.R. Core...");
-
-    AsterDisplay.showStatus(
-        "ASTY",
-        "Buscando\nCore..."
+    delay(
+        800
     );
 
-    HTTPClient http;
-
-    const String url =
-        String(ASTER_CORE_URL) +
-        "/health";
-
-    Serial.print("[Pocket] GET ");
-    Serial.println(url);
-
-    if (!http.begin(url))
-    {
-        Serial.println(
-            "[Pocket] ERROR inicializando HTTP."
-        );
-
-        AsterDisplay.showStatus(
-            "ASTY",
-            "Error\nHTTP"
-        );
-
-        return false;
-    }
-
-    http.setTimeout(
-        CORE_TIMEOUT_MS
-    );
-
-    const int statusCode =
-        http.GET();
-
-    const String response =
-        http.getString();
-
-    http.end();
-
-    Serial.print("[Pocket] HTTP: ");
-    Serial.println(statusCode);
-
-    Serial.print("[Pocket] Core: ");
-    Serial.println(response);
-
-    if (statusCode != 200)
-    {
-        Serial.println(
-            "[Pocket] ERROR: Core no disponible."
-        );
-
-        AsterDisplay.showStatus(
-            "ASTY",
-            "Core no\nresponde"
-        );
-
-        return false;
-    }
-
-    Serial.println();
-    Serial.println(
-        "[Pocket] A.S.T.E.R. Core disponible."
-    );
-
-    AsterDisplay.showStatus(
-        "ASTY",
-        "Wi-Fi OK\n\nCore disponible"
-    );
 
     return true;
 }
@@ -174,9 +127,15 @@ static bool checkCore()
 
 void setup()
 {
-    Serial.begin(115200);
+    Serial.begin(
+        115200
+    );
 
-    delay(1000);
+
+    delay(
+        1000
+    );
+
 
     Serial.println();
     Serial.println(
@@ -186,34 +145,189 @@ void setup()
         "A.S.T.E.R. Pocket"
     );
     Serial.println(
-        "Wi-Fi + Core Test v0.4"
+        "Asty Real Test v0.5"
     );
     Serial.println(
         "================================"
     );
 
+
+    // -----------------------------------------------------
+    // AMOLED
+    // -----------------------------------------------------
+
     AsterDisplay.begin();
+
 
     AsterDisplay.showStatus(
         "A.S.T.E.R.",
         "Pocket\niniciando..."
     );
 
-    delay(1000);
+
+    delay(
+        800
+    );
+
+
+    // -----------------------------------------------------
+    // Wi-Fi
+    // -----------------------------------------------------
 
     if (!connectWiFi())
     {
         return;
     }
 
-    if (!checkCore())
+
+    // -----------------------------------------------------
+    // Core
+    // -----------------------------------------------------
+
+    AsterDisplay.showStatus(
+        "ASTY",
+        "Buscando\nCore..."
+    );
+
+
+    if (!CoreClient.checkHealth())
     {
+        AsterDisplay.showStatus(
+            "ASTY",
+            "Core no\ndisponible"
+        );
+
         return;
     }
 
+
+    Serial.println(
+        "[Pocket] Core disponible."
+    );
+
+
+    AsterDisplay.showStatus(
+        "ASTY",
+        "Core\nconectado"
+    );
+
+
+    delay(
+        800
+    );
+
+
+    // -----------------------------------------------------
+    // Crear conversación
+    // -----------------------------------------------------
+
+    AsterDisplay.showStatus(
+        "ASTY",
+        "Creando\nconversacion..."
+    );
+
+
+    String conversationId;
+
+
+    if (
+        !CoreClient.createConversation(
+            conversationId
+        )
+    )
+    {
+        Serial.println(
+            "[Pocket] ERROR creando conversación."
+        );
+
+
+        AsterDisplay.showStatus(
+            "ASTY",
+            "Error de\nautenticacion"
+        );
+
+
+        return;
+    }
+
+
+    // -----------------------------------------------------
+    // Primera petición real a Asty
+    // -----------------------------------------------------
+
+    AsterDisplay.showStatus(
+        "ASTY",
+        "Pensando..."
+    );
+
+
+    const String pocketMessage =
+        "Hola Asty. "
+        "Este mensaje procede fisicamente de "
+        "A.S.T.E.R. Pocket mediante la Waveshare. "
+        "Responde con una sola frase muy corta "
+        "confirmando que me recibes desde Pocket.";
+
+
+    String answer;
+    String provider;
+    String model;
+
+
+    if (
+        !CoreClient.sendMessage(
+            conversationId,
+            pocketMessage,
+            answer,
+            provider,
+            model
+        )
+    )
+    {
+        Serial.println(
+            "[Pocket] ERROR hablando con Asty."
+        );
+
+
+        AsterDisplay.showStatus(
+            "ASTY",
+            "Error al\nhablar con Core"
+        );
+
+
+        return;
+    }
+
+
+    // -----------------------------------------------------
+    // Respuesta real en AMOLED
+    // -----------------------------------------------------
+
+    AsterDisplay.showStatus(
+        "ASTY",
+        answer.c_str()
+    );
+
+
     Serial.println();
     Serial.println(
-        "[Pocket] TEST COMPLETADO."
+        "[Pocket] PRIMERA RESPUESTA REAL DE ASTY EN POCKET."
+    );
+
+    Serial.print(
+        "[Pocket] Ruta: "
+    );
+
+    Serial.print(
+        provider
+    );
+
+    Serial.print(
+        " / "
+    );
+
+    Serial.println(
+        model
     );
 }
 
@@ -226,5 +340,7 @@ void loop()
 {
     AsterDisplay.update();
 
-    delay(5);
-}  
+    delay(
+        5
+    );
+}
