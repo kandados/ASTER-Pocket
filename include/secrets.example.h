@@ -1,0 +1,6 @@
+#pragma once
+
+#define ASTER_WIFI_SSID "TU_WIFI"
+#define ASTER_WIFI_PASSWORD "TU_PASSWORD"
+
+#define ASTER_CORE_URL "http://192.168.23.246:8000"
