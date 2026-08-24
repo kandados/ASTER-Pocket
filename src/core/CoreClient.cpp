@@ -1,13 +1,73 @@
 #include "CoreClient.h"
 
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 
 #include "secrets.h"
+#include "TlsRoots.h"
 
 
-static constexpr uint32_t CORE_HTTP_TIMEOUT_MS =
-    60000;
+static constexpr uint32_t CORE_HTTP_TIMEOUT_MS = 60000;
+
+
+// ---------------------------------------------------------
+// Preparar conexión HTTPS verificada
+// ---------------------------------------------------------
+
+static bool beginSecureRequest(
+    HTTPClient &http,
+    WiFiClientSecure &tlsClient,
+    const String &url
+)
+{
+    if (!url.startsWith("https://"))
+    {
+        Serial.println(
+            "[CoreClient] ERROR: ASTER_CORE_URL no usa HTTPS."
+        );
+
+        return false;
+    }
+
+
+    // Verificación TLS mediante CA de confianza.
+    // No usamos setInsecure().
+
+    tlsClient.setCACert(
+        ASTER_TLS_ROOT_CA
+    );
+
+
+    // Tiempo máximo para completar handshake TLS.
+
+    tlsClient.setHandshakeTimeout(
+        20
+    );
+
+
+    http.setTimeout(
+        CORE_HTTP_TIMEOUT_MS
+    );
+
+
+    if (
+        !http.begin(
+            tlsClient,
+            url
+        )
+    )
+    {
+        Serial.println(
+            "[CoreClient] ERROR inicializando HTTPS."
+        );
+
+        return false;
+    }
+
+
+    return true;
+}
 
 
 // ---------------------------------------------------------
@@ -32,13 +92,17 @@ void CoreClientClass::addAuthenticationHeader(
 
 bool CoreClientClass::checkHealth()
 {
+    WiFiClientSecure tlsClient;
+
     HTTPClient http;
+
 
     const String url =
         String(ASTER_CORE_URL) +
         "/health";
 
 
+    Serial.println();
     Serial.print(
         "[CoreClient] GET "
     );
@@ -48,19 +112,21 @@ bool CoreClientClass::checkHealth()
     );
 
 
-    if (!http.begin(url))
-    {
-        Serial.println(
-            "[CoreClient] ERROR inicializando HTTP."
-        );
+    Serial.println(
+        "[CoreClient] TLS: verificación activada."
+    );
 
+
+    if (
+        !beginSecureRequest(
+            http,
+            tlsClient,
+            url
+        )
+    )
+    {
         return false;
     }
-
-
-    http.setTimeout(
-        10000
-    );
 
 
     const int status =
@@ -84,7 +150,7 @@ bool CoreClientClass::checkHealth()
 
 
     Serial.print(
-        "[CoreClient] Health: "
+        "[CoreClient] Health response: "
     );
 
     Serial.println(
@@ -92,7 +158,17 @@ bool CoreClientClass::checkHealth()
     );
 
 
-    return status == 200;
+    if (status != 200)
+    {
+        Serial.println(
+            "[CoreClient] ERROR: Core remoto no disponible."
+        );
+
+        return false;
+    }
+
+
+    return true;
 }
 
 
@@ -107,6 +183,8 @@ bool CoreClientClass::createConversation(
     conversationId = "";
 
 
+    WiFiClientSecure tlsClient;
+
     HTTPClient http;
 
 
@@ -115,6 +193,7 @@ bool CoreClientClass::createConversation(
         "/conversations";
 
 
+    Serial.println();
     Serial.print(
         "[CoreClient] POST "
     );
@@ -124,19 +203,16 @@ bool CoreClientClass::createConversation(
     );
 
 
-    if (!http.begin(url))
+    if (
+        !beginSecureRequest(
+            http,
+            tlsClient,
+            url
+        )
+    )
     {
-        Serial.println(
-            "[CoreClient] ERROR inicializando conversación."
-        );
-
         return false;
     }
-
-
-    http.setTimeout(
-        CORE_HTTP_TIMEOUT_MS
-    );
 
 
     http.addHeader(
@@ -154,7 +230,7 @@ bool CoreClientClass::createConversation(
 
 
     request["title"] =
-        "A.S.T.E.R. Pocket - primera conversación real";
+        "A.S.T.E.R. Pocket remoto v0.6";
 
 
     String body;
@@ -188,17 +264,16 @@ bool CoreClientClass::createConversation(
     );
 
 
-    Serial.print(
-        "[CoreClient] Respuesta: "
-    );
-
-    Serial.println(
-        response
-    );
-
-
     if (status != 201)
     {
+        Serial.print(
+            "[CoreClient] ERROR response: "
+        );
+
+        Serial.println(
+            response
+        );
+
         return false;
     }
 
@@ -234,7 +309,7 @@ bool CoreClientClass::createConversation(
     if (id == nullptr)
     {
         Serial.println(
-            "[CoreClient] ERROR: Core no devolvió conversation id."
+            "[CoreClient] ERROR: Core no devolvió conversation ID."
         );
 
         return false;
@@ -275,6 +350,8 @@ bool CoreClientClass::sendMessage(
     model = "";
 
 
+    WiFiClientSecure tlsClient;
+
     HTTPClient http;
 
 
@@ -285,6 +362,7 @@ bool CoreClientClass::sendMessage(
         "/messages";
 
 
+    Serial.println();
     Serial.print(
         "[CoreClient] POST "
     );
@@ -294,19 +372,16 @@ bool CoreClientClass::sendMessage(
     );
 
 
-    if (!http.begin(url))
+    if (
+        !beginSecureRequest(
+            http,
+            tlsClient,
+            url
+        )
+    )
     {
-        Serial.println(
-            "[CoreClient] ERROR inicializando mensaje."
-        );
-
         return false;
     }
-
-
-    http.setTimeout(
-        CORE_HTTP_TIMEOUT_MS
-    );
 
 
     http.addHeader(
@@ -337,7 +412,7 @@ bool CoreClientClass::sendMessage(
 
 
     Serial.println(
-        "[CoreClient] Enviando mensaje a Asty..."
+        "[CoreClient] Enviando mensaje remoto a Asty..."
     );
 
 
@@ -363,17 +438,16 @@ bool CoreClientClass::sendMessage(
     );
 
 
-    Serial.print(
-        "[CoreClient] Respuesta completa: "
-    );
-
-    Serial.println(
-        response
-    );
-
-
     if (status != 201)
     {
+        Serial.print(
+            "[CoreClient] ERROR response: "
+        );
+
+        Serial.println(
+            response
+        );
+
         return false;
     }
 

@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <WiFi.h>
 
+#include <time.h>
+
 #include "drivers/display/AsterDisplay.h"
 #include "core/CoreClient.h"
 #include "secrets.h"
@@ -9,6 +11,16 @@
 static constexpr uint32_t WIFI_TIMEOUT_MS =
     20000;
 
+static constexpr uint32_t TIME_TIMEOUT_MS =
+    20000;
+
+
+// Cualquier fecha posterior a noviembre de 2023
+// nos sirve para considerar que NTP ha sincronizado.
+
+static constexpr time_t MINIMUM_VALID_TIME =
+    1700000000;
+
 
 // ---------------------------------------------------------
 // Wi-Fi
@@ -16,8 +28,18 @@ static constexpr uint32_t WIFI_TIMEOUT_MS =
 
 static bool connectWiFi()
 {
+    Serial.println();
     Serial.println(
-        "[Pocket] Conectando a Cudy-Homelab..."
+        "[Pocket] Conectando a Wi-Fi externa..."
+    );
+
+
+    Serial.print(
+        "[Pocket] SSID: "
+    );
+
+    Serial.println(
+        ASTER_WIFI_SSID
     );
 
 
@@ -65,7 +87,16 @@ static bool connectWiFi()
     )
     {
         Serial.println(
-            "[Pocket] ERROR Wi-Fi."
+            "[Pocket] ERROR conectando al Wi-Fi."
+        );
+
+
+        Serial.print(
+            "[Pocket] WiFi.status(): "
+        );
+
+        Serial.println(
+            WiFi.status()
         );
 
 
@@ -106,6 +137,15 @@ static bool connectWiFi()
     );
 
 
+    Serial.print(
+        "[Pocket] Gateway: "
+    );
+
+    Serial.println(
+        WiFi.gatewayIP()
+    );
+
+
     AsterDisplay.showStatus(
         "ASTY",
         "Wi-Fi\nconectado"
@@ -113,7 +153,123 @@ static bool connectWiFi()
 
 
     delay(
-        800
+        700
+    );
+
+
+    return true;
+}
+
+
+// ---------------------------------------------------------
+// Sincronizar reloj para validar certificados TLS
+// ---------------------------------------------------------
+
+static bool synchronizeClock()
+{
+    Serial.println();
+    Serial.println(
+        "[Pocket] Sincronizando hora mediante NTP..."
+    );
+
+
+    AsterDisplay.showStatus(
+        "ASTY",
+        "Sincronizando\nhora..."
+    );
+
+
+    configTime(
+        0,
+        0,
+        "pool.ntp.org",
+        "time.cloudflare.com",
+        "time.google.com"
+    );
+
+
+    const uint32_t start =
+        millis();
+
+
+    while (
+        time(nullptr) < MINIMUM_VALID_TIME &&
+        millis() - start < TIME_TIMEOUT_MS
+    )
+    {
+        AsterDisplay.update();
+
+        delay(
+            100
+        );
+    }
+
+
+    const time_t now =
+        time(nullptr);
+
+
+    if (
+        now < MINIMUM_VALID_TIME
+    )
+    {
+        Serial.println(
+            "[Pocket] ERROR sincronizando reloj."
+        );
+
+
+        AsterDisplay.showStatus(
+            "ASTY",
+            "Error de\nhora"
+        );
+
+
+        return false;
+    }
+
+
+    Serial.print(
+        "[Pocket] Epoch: "
+    );
+
+    Serial.println(
+        static_cast<unsigned long>(now)
+    );
+
+
+    struct tm timeInfo;
+
+
+    if (
+        gmtime_r(
+            &now,
+            &timeInfo
+        ) != nullptr
+    )
+    {
+        char buffer[40];
+
+
+        strftime(
+            buffer,
+            sizeof(buffer),
+            "%Y-%m-%d %H:%M:%S UTC",
+            &timeInfo
+        );
+
+
+        Serial.print(
+            "[Pocket] Hora: "
+        );
+
+        Serial.println(
+            buffer
+        );
+    }
+
+
+    Serial.println(
+        "[Pocket] Hora válida para TLS."
     );
 
 
@@ -145,7 +301,7 @@ void setup()
         "A.S.T.E.R. Pocket"
     );
     Serial.println(
-        "Asty Real Test v0.5"
+        "Remote Asty Test v0.6"
     );
     Serial.println(
         "================================"
@@ -161,7 +317,7 @@ void setup()
 
     AsterDisplay.showStatus(
         "A.S.T.E.R.",
-        "Pocket\niniciando..."
+        "Pocket\nremoto v0.6"
     );
 
 
@@ -171,49 +327,71 @@ void setup()
 
 
     // -----------------------------------------------------
-    // Wi-Fi
+    // Wi-Fi externa
     // -----------------------------------------------------
 
-    if (!connectWiFi())
+    if (
+        !connectWiFi()
+    )
     {
         return;
     }
 
 
     // -----------------------------------------------------
-    // Core
+    // Hora para TLS
+    // -----------------------------------------------------
+
+    if (
+        !synchronizeClock()
+    )
+    {
+        return;
+    }
+
+
+    // -----------------------------------------------------
+    // Comprobar Core remoto
     // -----------------------------------------------------
 
     AsterDisplay.showStatus(
         "ASTY",
-        "Buscando\nCore..."
+        "Conectando\nremotamente..."
     );
 
 
-    if (!CoreClient.checkHealth())
+    if (
+        !CoreClient.checkHealth()
+    )
     {
+        Serial.println(
+            "[Pocket] ERROR: Core remoto no disponible."
+        );
+
+
         AsterDisplay.showStatus(
             "ASTY",
-            "Core no\ndisponible"
+            "Core remoto\nno disponible"
         );
+
 
         return;
     }
 
 
     Serial.println(
-        "[Pocket] Core disponible."
+        "[Pocket] Core remoto disponible."
     );
 
 
     AsterDisplay.showStatus(
         "ASTY",
-        "Core\nconectado"
+        "Core remoto\nconectado"
     );
 
 
     delay(
-        800
+        700
     );
 
 
@@ -252,7 +430,7 @@ void setup()
 
 
     // -----------------------------------------------------
-    // Primera petición real a Asty
+    // Primera petición remota física
     // -----------------------------------------------------
 
     AsterDisplay.showStatus(
@@ -263,14 +441,17 @@ void setup()
 
     const String pocketMessage =
         "Hola Asty. "
-        "Este mensaje procede fisicamente de "
-        "A.S.T.E.R. Pocket mediante la Waveshare. "
-        "Responde con una sola frase muy corta "
-        "confirmando que me recibes desde Pocket.";
+        "Esta peticion procede fisicamente de "
+        "A.S.T.E.R. Pocket desde una red Wi-Fi externa "
+        "al homelab mediante Internet y HTTPS. "
+        "Responde con una sola frase muy corta confirmando "
+        "que recibes correctamente a Pocket de forma remota.";
 
 
     String answer;
+
     String provider;
+
     String model;
 
 
@@ -285,7 +466,7 @@ void setup()
     )
     {
         Serial.println(
-            "[Pocket] ERROR hablando con Asty."
+            "[Pocket] ERROR hablando remotamente con Asty."
         );
 
 
@@ -311,7 +492,11 @@ void setup()
 
     Serial.println();
     Serial.println(
-        "[Pocket] PRIMERA RESPUESTA REAL DE ASTY EN POCKET."
+        "================================"
+    );
+
+    Serial.println(
+        "[Pocket] PRIMERA RESPUESTA REMOTA DE ASTY."
     );
 
     Serial.print(
@@ -328,6 +513,10 @@ void setup()
 
     Serial.println(
         model
+    );
+
+    Serial.println(
+        "================================"
     );
 }
 
