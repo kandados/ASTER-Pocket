@@ -37,6 +37,17 @@ static lv_color_t displayBuffer[
 
 
 // ---------------------------------------------------------
+// Elementos prueba táctil
+// ---------------------------------------------------------
+
+static lv_obj_t *touchButton =
+    nullptr;
+
+static lv_obj_t *touchButtonLabel =
+    nullptr;
+
+
+// ---------------------------------------------------------
 // AMOLED
 // ---------------------------------------------------------
 
@@ -132,7 +143,175 @@ static void asterLvglTick(
 
 
 // ---------------------------------------------------------
-// Inicialización de pantalla
+// Diagnóstico del evento táctil
+// ---------------------------------------------------------
+
+static void touchButtonEvent(
+    lv_event_t *event
+)
+{
+    if (
+        lv_event_get_code(event)
+        != LV_EVENT_CLICKED
+    )
+    {
+        return;
+    }
+
+
+    lv_obj_t *target =
+        lv_event_get_target(event);
+
+
+    lv_area_t area;
+
+    lv_obj_get_coords(
+        target,
+        &area
+    );
+
+
+    lv_point_t point = {
+        0,
+        0
+    };
+
+
+    lv_indev_t *input =
+        lv_indev_get_act();
+
+
+    if (input != nullptr)
+    {
+        lv_indev_get_point(
+            input,
+            &point
+        );
+    }
+
+
+    Serial.println();
+    Serial.println(
+        "----- LVGL CLICK -----"
+    );
+
+
+    Serial.print(
+        "[LVGL] Punto evento x="
+    );
+
+    Serial.print(
+        point.x
+    );
+
+    Serial.print(
+        " y="
+    );
+
+    Serial.println(
+        point.y
+    );
+
+
+    Serial.print(
+        "[LVGL] Boton x1="
+    );
+
+    Serial.print(
+        area.x1
+    );
+
+    Serial.print(
+        " x2="
+    );
+
+    Serial.print(
+        area.x2
+    );
+
+    Serial.print(
+        " y1="
+    );
+
+    Serial.print(
+        area.y1
+    );
+
+    Serial.print(
+        " y2="
+    );
+
+    Serial.println(
+        area.y2
+    );
+
+
+    const bool inside =
+        point.x >= area.x1 &&
+        point.x <= area.x2 &&
+        point.y >= area.y1 &&
+        point.y <= area.y2;
+
+
+    Serial.print(
+        "[LVGL] Punto dentro del boton: "
+    );
+
+    Serial.println(
+        inside ? "SI" : "NO"
+    );
+
+
+    Serial.println(
+        "----------------------"
+    );
+
+
+    if (touchButtonLabel != nullptr)
+    {
+        lv_label_set_text(
+            touchButtonLabel,
+            "TACTO\nDETECTADO"
+        );
+    }
+}
+
+
+// ---------------------------------------------------------
+// Preparar pantalla
+// ---------------------------------------------------------
+
+static lv_obj_t *prepareScreen()
+{
+    lv_obj_t *screen =
+        lv_scr_act();
+
+
+    lv_obj_clean(
+        screen
+    );
+
+
+    lv_obj_set_style_bg_color(
+        screen,
+        lv_color_black(),
+        0
+    );
+
+
+    lv_obj_set_style_bg_opa(
+        screen,
+        LV_OPA_COVER,
+        0
+    );
+
+
+    return screen;
+}
+
+
+// ---------------------------------------------------------
+// Inicialización
 // ---------------------------------------------------------
 
 void AsterDisplayClass::begin()
@@ -142,24 +321,16 @@ void AsterDisplayClass::begin()
     );
 
 
-    // Inicializar controlador físico
-
     gfx->begin();
 
-
-    // Brillo AMOLED
 
     gfx->setBrightness(
         200
     );
 
 
-    // Inicializar LVGL
-
     lv_init();
 
-
-    // Buffer de dibujo
 
     lv_disp_draw_buf_init(
         &drawBuffer,
@@ -169,13 +340,13 @@ void AsterDisplayClass::begin()
     );
 
 
-    // Driver de pantalla LVGL
-
     static lv_disp_drv_t displayDriver;
+
 
     lv_disp_drv_init(
         &displayDriver
     );
+
 
     displayDriver.hor_res =
         LCD_WIDTH;
@@ -189,12 +360,11 @@ void AsterDisplayClass::begin()
     displayDriver.draw_buf =
         &drawBuffer;
 
+
     lv_disp_drv_register(
         &displayDriver
     );
 
-
-    // Temporizador necesario para LVGL
 
     const esp_timer_create_args_t timerArgs = {
         .callback = &asterLvglTick,
@@ -206,18 +376,16 @@ void AsterDisplayClass::begin()
         nullptr;
 
 
-    esp_err_t timerResult =
+    const esp_err_t timerResult =
         esp_timer_create(
             &timerArgs,
             &timer
         );
 
 
-    if (
-        timerResult == ESP_OK
-    )
+    if (timerResult == ESP_OK)
     {
-        esp_err_t startResult =
+        const esp_err_t startResult =
             esp_timer_start_periodic(
                 timer,
                 ASTER_LVGL_TICK_PERIOD_MS
@@ -225,9 +393,7 @@ void AsterDisplayClass::begin()
             );
 
 
-        if (
-            startResult != ESP_OK
-        )
+        if (startResult != ESP_OK)
         {
             Serial.println(
                 "[AsterDisplay] ERROR iniciando temporizador LVGL"
@@ -249,7 +415,7 @@ void AsterDisplayClass::begin()
 
 
 // ---------------------------------------------------------
-// Pantalla básica de estado
+// Pantalla básica
 // ---------------------------------------------------------
 
 void AsterDisplayClass::showStatus(
@@ -257,48 +423,21 @@ void AsterDisplayClass::showStatus(
     const char *messageText
 )
 {
+    touchButton =
+        nullptr;
+
+    touchButtonLabel =
+        nullptr;
+
+
     lv_obj_t *screen =
-        lv_scr_act();
+        prepareScreen();
 
-
-    // Limpiar pantalla anterior
-
-    lv_obj_clean(
-        screen
-    );
-
-
-    // -----------------------------------------------------
-    // Fondo AMOLED negro
-    // -----------------------------------------------------
-
-    lv_obj_set_style_bg_color(
-        screen,
-        lv_color_black(),
-        0
-    );
-
-    lv_obj_set_style_bg_opa(
-        screen,
-        LV_OPA_COVER,
-        0
-    );
-
-
-    // -----------------------------------------------------
-    // Título
-    // -----------------------------------------------------
 
     lv_obj_t *title =
         lv_label_create(
             screen
         );
-
-
-    lv_label_set_long_mode(
-        title,
-        LV_LABEL_LONG_WRAP
-    );
 
 
     lv_label_set_text(
@@ -319,8 +458,6 @@ void AsterDisplayClass::showStatus(
         0
     );
 
-
-    // Fuente grande
 
     lv_obj_set_style_text_font(
         title,
@@ -343,10 +480,6 @@ void AsterDisplayClass::showStatus(
         65
     );
 
-
-    // -----------------------------------------------------
-    // Mensaje
-    // -----------------------------------------------------
 
     lv_obj_t *message =
         lv_label_create(
@@ -379,8 +512,6 @@ void AsterDisplayClass::showStatus(
     );
 
 
-    // Fuente grande
-
     lv_obj_set_style_text_font(
         message,
         &lv_font_montserrat_36,
@@ -403,14 +534,291 @@ void AsterDisplayClass::showStatus(
     );
 
 
-    // Forzar primer refresco
+    lv_timer_handler();
+}
+
+
+// ---------------------------------------------------------
+// Prueba táctil v0.7
+// ---------------------------------------------------------
+
+void AsterDisplayClass::showTouchTest()
+{
+    lv_obj_t *screen =
+        prepareScreen();
+
+
+    lv_obj_t *title =
+        lv_label_create(
+            screen
+        );
+
+
+    lv_label_set_text(
+        title,
+        "ASTY"
+    );
+
+
+    lv_obj_set_width(
+        title,
+        420
+    );
+
+
+    lv_obj_set_style_text_color(
+        title,
+        lv_color_white(),
+        0
+    );
+
+
+    lv_obj_set_style_text_font(
+        title,
+        &lv_font_montserrat_36,
+        0
+    );
+
+
+    lv_obj_set_style_text_align(
+        title,
+        LV_TEXT_ALIGN_CENTER,
+        0
+    );
+
+
+    lv_obj_align(
+        title,
+        LV_ALIGN_TOP_MID,
+        0,
+        55
+    );
+
+
+    lv_obj_t *instruction =
+        lv_label_create(
+            screen
+        );
+
+
+    lv_label_set_text(
+        instruction,
+        "Prueba tactil"
+    );
+
+
+    lv_obj_set_width(
+        instruction,
+        400
+    );
+
+
+    lv_obj_set_style_text_color(
+        instruction,
+        lv_color_white(),
+        0
+    );
+
+
+    lv_obj_set_style_text_font(
+        instruction,
+        &lv_font_montserrat_24,
+        0
+    );
+
+
+    lv_obj_set_style_text_align(
+        instruction,
+        LV_TEXT_ALIGN_CENTER,
+        0
+    );
+
+
+    lv_obj_align(
+        instruction,
+        LV_ALIGN_TOP_MID,
+        0,
+        115
+    );
+
+
+    // -----------------------------------------------------
+    // Botón
+    // -----------------------------------------------------
+
+    touchButton =
+        lv_btn_create(
+            screen
+        );
+
+
+    lv_obj_set_size(
+        touchButton,
+        330,
+        160
+    );
+
+
+    lv_obj_align(
+        touchButton,
+        LV_ALIGN_CENTER,
+        0,
+        45
+    );
+
+
+    lv_obj_set_style_radius(
+        touchButton,
+        35,
+        0
+    );
+
+
+    lv_obj_set_style_bg_color(
+        touchButton,
+        lv_color_make(
+            30,
+            30,
+            30
+        ),
+        0
+    );
+
+
+    lv_obj_set_style_border_width(
+        touchButton,
+        2,
+        0
+    );
+
+
+    lv_obj_set_style_border_color(
+        touchButton,
+        lv_color_white(),
+        0
+    );
+
+
+    lv_obj_add_event_cb(
+        touchButton,
+        touchButtonEvent,
+        LV_EVENT_CLICKED,
+        nullptr
+    );
+
+
+    touchButtonLabel =
+        lv_label_create(
+            touchButton
+        );
+
+
+    lv_label_set_text(
+        touchButtonLabel,
+        "TOCA AQUI"
+    );
+
+
+    lv_obj_set_width(
+        touchButtonLabel,
+        290
+    );
+
+
+    lv_obj_set_style_text_color(
+        touchButtonLabel,
+        lv_color_white(),
+        0
+    );
+
+
+    lv_obj_set_style_text_font(
+        touchButtonLabel,
+        &lv_font_montserrat_36,
+        0
+    );
+
+
+    lv_obj_set_style_text_align(
+        touchButtonLabel,
+        LV_TEXT_ALIGN_CENTER,
+        0
+    );
+
+
+    lv_obj_center(
+        touchButtonLabel
+    );
+
+
+    // -----------------------------------------------------
+    // Mostrar límites reales calculados por LVGL
+    // -----------------------------------------------------
+
+    lv_obj_update_layout(
+        screen
+    );
+
+
+    lv_area_t area;
+
+
+    lv_obj_get_coords(
+        touchButton,
+        &area
+    );
+
+
+    Serial.println();
+    Serial.println(
+        "===== BOTON LVGL ====="
+    );
+
+
+    Serial.print(
+        "x1="
+    );
+
+    Serial.print(
+        area.x1
+    );
+
+    Serial.print(
+        " x2="
+    );
+
+    Serial.print(
+        area.x2
+    );
+
+    Serial.print(
+        " y1="
+    );
+
+    Serial.print(
+        area.y1
+    );
+
+    Serial.print(
+        " y2="
+    );
+
+    Serial.println(
+        area.y2
+    );
+
+
+    Serial.println(
+        "======================"
+    );
+
 
     lv_timer_handler();
 }
 
 
 // ---------------------------------------------------------
-// Actualización LVGL
+// Update
 // ---------------------------------------------------------
 
 void AsterDisplayClass::update()
@@ -420,7 +828,7 @@ void AsterDisplayClass::update()
 
 
 // ---------------------------------------------------------
-// Instancia global
+// Instancia
 // ---------------------------------------------------------
 
 AsterDisplayClass AsterDisplay;
