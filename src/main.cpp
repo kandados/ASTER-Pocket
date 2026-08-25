@@ -1,7 +1,206 @@
 #include <Arduino.h>
+#include <WiFi.h>
+#include <time.h>
 
 #include "drivers/display/AsterDisplay.h"
 #include "drivers/touch/AsterTouch.h"
+#include "core/CoreClient.h"
+#include "secrets.h"
+
+
+static constexpr uint32_t WIFI_TIMEOUT_MS =
+    20000;
+
+static constexpr uint32_t TIME_TIMEOUT_MS =
+    20000;
+
+static constexpr time_t MINIMUM_VALID_TIME =
+    1700000000;
+
+
+static String conversationId;
+
+
+// ---------------------------------------------------------
+// Wi-Fi
+// ---------------------------------------------------------
+
+static bool connectWiFi()
+{
+    Serial.println();
+    Serial.println(
+        "[Pocket] Conectando a Wi-Fi..."
+    );
+
+
+    Serial.print(
+        "[Pocket] SSID: "
+    );
+
+    Serial.println(
+        ASTER_WIFI_SSID
+    );
+
+
+    AsterDisplay.showStatus(
+        "ASTY",
+        "Conectando Wi-Fi..."
+    );
+
+
+    WiFi.mode(
+        WIFI_STA
+    );
+
+
+    WiFi.setSleep(
+        false
+    );
+
+
+    WiFi.begin(
+        ASTER_WIFI_SSID,
+        ASTER_WIFI_PASSWORD
+    );
+
+
+    const uint32_t start =
+        millis();
+
+
+    while (
+        WiFi.status() != WL_CONNECTED &&
+        millis() - start < WIFI_TIMEOUT_MS
+    )
+    {
+        AsterDisplay.update();
+
+        delay(
+            50
+        );
+    }
+
+
+    if (
+        WiFi.status() != WL_CONNECTED
+    )
+    {
+        Serial.println(
+            "[Pocket] ERROR conectando a Wi-Fi."
+        );
+
+
+        AsterDisplay.showStatus(
+            "ASTY",
+            "Error de Wi-Fi"
+        );
+
+
+        return false;
+    }
+
+
+    Serial.println(
+        "[Pocket] Wi-Fi conectado."
+    );
+
+
+    Serial.print(
+        "[Pocket] IP: "
+    );
+
+    Serial.println(
+        WiFi.localIP()
+    );
+
+
+    Serial.print(
+        "[Pocket] RSSI: "
+    );
+
+    Serial.print(
+        WiFi.RSSI()
+    );
+
+    Serial.println(
+        " dBm"
+    );
+
+
+    return true;
+}
+
+
+// ---------------------------------------------------------
+// NTP para TLS
+// ---------------------------------------------------------
+
+static bool synchronizeClock()
+{
+    Serial.println();
+    Serial.println(
+        "[Pocket] Sincronizando hora..."
+    );
+
+
+    AsterDisplay.showStatus(
+        "ASTY",
+        "Sincronizando hora..."
+    );
+
+
+    configTime(
+        0,
+        0,
+        "pool.ntp.org",
+        "time.cloudflare.com",
+        "time.google.com"
+    );
+
+
+    const uint32_t start =
+        millis();
+
+
+    while (
+        time(nullptr) < MINIMUM_VALID_TIME &&
+        millis() - start < TIME_TIMEOUT_MS
+    )
+    {
+        AsterDisplay.update();
+
+        delay(
+            100
+        );
+    }
+
+
+    if (
+        time(nullptr) < MINIMUM_VALID_TIME
+    )
+    {
+        Serial.println(
+            "[Pocket] ERROR sincronizando hora."
+        );
+
+
+        AsterDisplay.showStatus(
+            "ASTY",
+            "Error de hora"
+        );
+
+
+        return false;
+    }
+
+
+    Serial.println(
+        "[Pocket] Hora válida para TLS."
+    );
+
+
+    return true;
+}
 
 
 // ---------------------------------------------------------
@@ -30,7 +229,7 @@ void setup()
     );
 
     Serial.println(
-        "Touch Test v0.7"
+        "Touch Chat v0.8"
     );
 
     Serial.println(
@@ -47,17 +246,12 @@ void setup()
 
     AsterDisplay.showStatus(
         "ASTY",
-        "Iniciando\ntactil..."
-    );
-
-
-    delay(
-        500
+        "Iniciando..."
     );
 
 
     // -----------------------------------------------------
-    // CST9217
+    // Táctil
     // -----------------------------------------------------
 
     if (!AsterTouch.begin())
@@ -69,7 +263,54 @@ void setup()
 
         AsterDisplay.showStatus(
             "ASTY",
-            "Error\ntactil"
+            "Error táctil"
+        );
+
+
+        return;
+    }
+
+
+    // -----------------------------------------------------
+    // Wi-Fi
+    // -----------------------------------------------------
+
+    if (!connectWiFi())
+    {
+        return;
+    }
+
+
+    // -----------------------------------------------------
+    // Hora TLS
+    // -----------------------------------------------------
+
+    if (!synchronizeClock())
+    {
+        return;
+    }
+
+
+    // -----------------------------------------------------
+    // Core remoto
+    // -----------------------------------------------------
+
+    AsterDisplay.showStatus(
+        "ASTY",
+        "Conectando con Core..."
+    );
+
+
+    if (!CoreClient.checkHealth())
+    {
+        Serial.println(
+            "[Pocket] ERROR: Core remoto no disponible."
+        );
+
+
+        AsterDisplay.showStatus(
+            "ASTY",
+            "Core no disponible"
         );
 
 
@@ -78,20 +319,54 @@ void setup()
 
 
     Serial.println(
-        "[Pocket] Táctil preparado."
+        "[Pocket] Core remoto disponible."
     );
 
 
     // -----------------------------------------------------
-    // Prueba interactiva
+    // Conversación persistente
     // -----------------------------------------------------
 
-    AsterDisplay.showTouchTest();
+    if (
+        !CoreClient.createConversation(
+            conversationId
+        )
+    )
+    {
+        Serial.println(
+            "[Pocket] ERROR creando conversación."
+        );
+
+
+        AsterDisplay.showStatus(
+            "ASTY",
+            "Error creando conversación"
+        );
+
+
+        return;
+    }
+
+
+    Serial.print(
+        "[Pocket] Conversación activa: "
+    );
+
+    Serial.println(
+        conversationId
+    );
+
+
+    // -----------------------------------------------------
+    // Interfaz de chat
+    // -----------------------------------------------------
+
+    AsterDisplay.showChatInput();
 
 
     Serial.println();
     Serial.println(
-        "[Pocket] Toca el botón de la pantalla."
+        "[Pocket] Escribe una pregunta desde la pantalla."
     );
 }
 
@@ -103,6 +378,122 @@ void setup()
 void loop()
 {
     AsterDisplay.update();
+
+
+    String message;
+
+
+    if (
+        AsterDisplay.consumeSendRequest(
+            message
+        )
+    )
+    {
+        Serial.println();
+        Serial.println(
+            "================================"
+        );
+
+        Serial.print(
+            "[Pocket] Usuario: "
+        );
+
+        Serial.println(
+            message
+        );
+
+        Serial.println(
+            "================================"
+        );
+
+
+        AsterDisplay.showStatus(
+            "ASTY",
+            "Pensando..."
+        );
+
+
+        String answer;
+
+        String provider;
+
+        String model;
+
+
+        const bool success =
+            CoreClient.sendMessage(
+                conversationId,
+                message,
+                answer,
+                provider,
+                model
+            );
+
+
+        if (!success)
+        {
+            Serial.println(
+                "[Pocket] ERROR enviando mensaje."
+            );
+
+
+            AsterDisplay.showStatus(
+                "ASTY",
+                "Error hablando con Core"
+            );
+
+
+            delay(
+                1500
+            );
+
+
+            AsterDisplay.showChatInput();
+
+
+            return;
+        }
+
+
+        Serial.println();
+        Serial.println(
+            "================================"
+        );
+
+        Serial.print(
+            "[Pocket] Asty: "
+        );
+
+        Serial.println(
+            answer
+        );
+
+
+        Serial.print(
+            "[Pocket] Ruta: "
+        );
+
+        Serial.print(
+            provider
+        );
+
+        Serial.print(
+            " / "
+        );
+
+        Serial.println(
+            model
+        );
+
+        Serial.println(
+            "================================"
+        );
+
+
+        AsterDisplay.showReply(
+            answer.c_str()
+        );
+    }
 
 
     delay(

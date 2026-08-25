@@ -14,7 +14,15 @@ public:
         const char *message
     );
 
-    void showTouchTest();
+    void showChatInput();
+
+    void showReply(
+        const char *reply
+    );
+
+    bool consumeSendRequest(
+        String &message
+    );
 
     void update();
 };

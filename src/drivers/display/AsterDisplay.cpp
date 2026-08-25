@@ -37,14 +37,19 @@ static lv_color_t displayBuffer[
 
 
 // ---------------------------------------------------------
-// Elementos prueba táctil
+// Estado de la interfaz
 // ---------------------------------------------------------
 
-static lv_obj_t *touchButton =
+static lv_obj_t *messageInput =
     nullptr;
 
-static lv_obj_t *touchButtonLabel =
+static lv_obj_t *keyboard =
     nullptr;
+
+static String pendingMessage;
+
+static bool sendRequested =
+    false;
 
 
 // ---------------------------------------------------------
@@ -143,146 +148,18 @@ static void asterLvglTick(
 
 
 // ---------------------------------------------------------
-// Diagnóstico del evento táctil
-// ---------------------------------------------------------
-
-static void touchButtonEvent(
-    lv_event_t *event
-)
-{
-    if (
-        lv_event_get_code(event)
-        != LV_EVENT_CLICKED
-    )
-    {
-        return;
-    }
-
-
-    lv_obj_t *target =
-        lv_event_get_target(event);
-
-
-    lv_area_t area;
-
-    lv_obj_get_coords(
-        target,
-        &area
-    );
-
-
-    lv_point_t point = {
-        0,
-        0
-    };
-
-
-    lv_indev_t *input =
-        lv_indev_get_act();
-
-
-    if (input != nullptr)
-    {
-        lv_indev_get_point(
-            input,
-            &point
-        );
-    }
-
-
-    Serial.println();
-    Serial.println(
-        "----- LVGL CLICK -----"
-    );
-
-
-    Serial.print(
-        "[LVGL] Punto evento x="
-    );
-
-    Serial.print(
-        point.x
-    );
-
-    Serial.print(
-        " y="
-    );
-
-    Serial.println(
-        point.y
-    );
-
-
-    Serial.print(
-        "[LVGL] Boton x1="
-    );
-
-    Serial.print(
-        area.x1
-    );
-
-    Serial.print(
-        " x2="
-    );
-
-    Serial.print(
-        area.x2
-    );
-
-    Serial.print(
-        " y1="
-    );
-
-    Serial.print(
-        area.y1
-    );
-
-    Serial.print(
-        " y2="
-    );
-
-    Serial.println(
-        area.y2
-    );
-
-
-    const bool inside =
-        point.x >= area.x1 &&
-        point.x <= area.x2 &&
-        point.y >= area.y1 &&
-        point.y <= area.y2;
-
-
-    Serial.print(
-        "[LVGL] Punto dentro del boton: "
-    );
-
-    Serial.println(
-        inside ? "SI" : "NO"
-    );
-
-
-    Serial.println(
-        "----------------------"
-    );
-
-
-    if (touchButtonLabel != nullptr)
-    {
-        lv_label_set_text(
-            touchButtonLabel,
-            "TACTO\nDETECTADO"
-        );
-    }
-}
-
-
-// ---------------------------------------------------------
-// Preparar pantalla
+// Pantalla base
 // ---------------------------------------------------------
 
 static lv_obj_t *prepareScreen()
 {
+    messageInput =
+        nullptr;
+
+    keyboard =
+        nullptr;
+
+
     lv_obj_t *screen =
         lv_scr_act();
 
@@ -311,7 +188,129 @@ static lv_obj_t *prepareScreen()
 
 
 // ---------------------------------------------------------
-// Inicialización
+// Solicitar envío
+// ---------------------------------------------------------
+
+static void requestSend()
+{
+    if (messageInput == nullptr)
+    {
+        return;
+    }
+
+
+    const char *text =
+        lv_textarea_get_text(
+            messageInput
+        );
+
+
+    if (text == nullptr)
+    {
+        return;
+    }
+
+
+    String message =
+        String(text);
+
+
+    message.trim();
+
+
+    if (message.length() == 0)
+    {
+        Serial.println(
+            "[AsterDisplay] Mensaje vacío. No se envía."
+        );
+
+        return;
+    }
+
+
+    pendingMessage =
+        message;
+
+
+    sendRequested =
+        true;
+
+
+    Serial.print(
+        "[AsterDisplay] Solicitud de envío: "
+    );
+
+    Serial.println(
+        pendingMessage
+    );
+}
+
+
+// ---------------------------------------------------------
+// Botón ENVIAR
+// ---------------------------------------------------------
+
+static void sendButtonEvent(
+    lv_event_t *event
+)
+{
+    if (
+        lv_event_get_code(event)
+        != LV_EVENT_CLICKED
+    )
+    {
+        return;
+    }
+
+
+    requestSend();
+}
+
+
+// ---------------------------------------------------------
+// Tecla OK del teclado
+// ---------------------------------------------------------
+
+static void keyboardReadyEvent(
+    lv_event_t *event
+)
+{
+    if (
+        lv_event_get_code(event)
+        != LV_EVENT_READY
+    )
+    {
+        return;
+    }
+
+
+    requestSend();
+}
+
+
+// ---------------------------------------------------------
+// Nueva pregunta
+// ---------------------------------------------------------
+
+static void newQuestionEvent(
+    lv_event_t *event
+)
+{
+    if (
+        lv_event_get_code(event)
+        != LV_EVENT_CLICKED
+    )
+    {
+        return;
+    }
+
+
+    AsterDisplay.showChatInput();
+}
+
+
+// ---------------------------------------------------------
+// Inicialización AMOLED + LVGL
 // ---------------------------------------------------------
 
 void AsterDisplayClass::begin()
@@ -415,7 +414,7 @@ void AsterDisplayClass::begin()
 
 
 // ---------------------------------------------------------
-// Pantalla básica
+// Pantalla de estado
 // ---------------------------------------------------------
 
 void AsterDisplayClass::showStatus(
@@ -423,13 +422,6 @@ void AsterDisplayClass::showStatus(
     const char *messageText
 )
 {
-    touchButton =
-        nullptr;
-
-    touchButtonLabel =
-        nullptr;
-
-
     lv_obj_t *screen =
         prepareScreen();
 
@@ -477,7 +469,7 @@ void AsterDisplayClass::showStatus(
         title,
         LV_ALIGN_TOP_MID,
         0,
-        65
+        70
     );
 
 
@@ -501,7 +493,7 @@ void AsterDisplayClass::showStatus(
 
     lv_obj_set_width(
         message,
-        400
+        390
     );
 
 
@@ -514,7 +506,7 @@ void AsterDisplayClass::showStatus(
 
     lv_obj_set_style_text_font(
         message,
-        &lv_font_montserrat_36,
+        &lv_font_montserrat_24,
         0
     );
 
@@ -530,7 +522,7 @@ void AsterDisplayClass::showStatus(
         message,
         LV_ALIGN_CENTER,
         0,
-        45
+        35
     );
 
 
@@ -539,14 +531,25 @@ void AsterDisplayClass::showStatus(
 
 
 // ---------------------------------------------------------
-// Prueba táctil v0.7
+// Interfaz para escribir a Asty
 // ---------------------------------------------------------
 
-void AsterDisplayClass::showTouchTest()
+void AsterDisplayClass::showChatInput()
 {
+    sendRequested =
+        false;
+
+    pendingMessage =
+        "";
+
+
     lv_obj_t *screen =
         prepareScreen();
 
+
+    // -----------------------------------------------------
+    // Título
+    // -----------------------------------------------------
 
     lv_obj_t *title =
         lv_label_create(
@@ -560,12 +563,6 @@ void AsterDisplayClass::showTouchTest()
     );
 
 
-    lv_obj_set_width(
-        title,
-        420
-    );
-
-
     lv_obj_set_style_text_color(
         title,
         lv_color_white(),
@@ -580,240 +577,419 @@ void AsterDisplayClass::showTouchTest()
     );
 
 
-    lv_obj_set_style_text_align(
-        title,
-        LV_TEXT_ALIGN_CENTER,
-        0
-    );
-
-
     lv_obj_align(
         title,
         LV_ALIGN_TOP_MID,
         0,
-        55
+        12
     );
 
 
-    lv_obj_t *instruction =
-        lv_label_create(
+    // -----------------------------------------------------
+    // Campo de texto
+    // -----------------------------------------------------
+
+    messageInput =
+        lv_textarea_create(
             screen
         );
 
 
-    lv_label_set_text(
-        instruction,
-        "Prueba tactil"
+    lv_obj_set_size(
+        messageInput,
+        410,
+        92
     );
 
 
-    lv_obj_set_width(
-        instruction,
-        400
+    lv_obj_align(
+        messageInput,
+        LV_ALIGN_TOP_MID,
+        0,
+        62
     );
 
 
-    lv_obj_set_style_text_color(
-        instruction,
-        lv_color_white(),
-        0
+    lv_textarea_set_placeholder_text(
+        messageInput,
+        "Escribe a Asty..."
+    );
+
+
+    lv_textarea_set_max_length(
+        messageInput,
+        240
+    );
+
+
+    lv_textarea_set_one_line(
+        messageInput,
+        false
     );
 
 
     lv_obj_set_style_text_font(
-        instruction,
+        messageInput,
         &lv_font_montserrat_24,
         0
     );
 
 
-    lv_obj_set_style_text_align(
-        instruction,
-        LV_TEXT_ALIGN_CENTER,
-        0
-    );
-
-
-    lv_obj_align(
-        instruction,
-        LV_ALIGN_TOP_MID,
-        0,
-        115
-    );
-
-
     // -----------------------------------------------------
-    // Botón
+    // Botón enviar
     // -----------------------------------------------------
 
-    touchButton =
+    lv_obj_t *sendButton =
         lv_btn_create(
             screen
         );
 
 
     lv_obj_set_size(
-        touchButton,
-        330,
-        160
+        sendButton,
+        160,
+        48
     );
 
 
     lv_obj_align(
-        touchButton,
-        LV_ALIGN_CENTER,
+        sendButton,
+        LV_ALIGN_TOP_MID,
         0,
-        45
+        163
     );
 
 
     lv_obj_set_style_radius(
-        touchButton,
-        35,
-        0
-    );
-
-
-    lv_obj_set_style_bg_color(
-        touchButton,
-        lv_color_make(
-            30,
-            30,
-            30
-        ),
-        0
-    );
-
-
-    lv_obj_set_style_border_width(
-        touchButton,
-        2,
-        0
-    );
-
-
-    lv_obj_set_style_border_color(
-        touchButton,
-        lv_color_white(),
+        sendButton,
+        20,
         0
     );
 
 
     lv_obj_add_event_cb(
-        touchButton,
-        touchButtonEvent,
+        sendButton,
+        sendButtonEvent,
         LV_EVENT_CLICKED,
         nullptr
     );
 
 
-    touchButtonLabel =
+    lv_obj_t *sendLabel =
         lv_label_create(
-            touchButton
+            sendButton
         );
 
 
     lv_label_set_text(
-        touchButtonLabel,
-        "TOCA AQUI"
+        sendLabel,
+        "ENVIAR"
     );
 
 
-    lv_obj_set_width(
-        touchButtonLabel,
-        290
+    lv_obj_set_style_text_font(
+        sendLabel,
+        &lv_font_montserrat_24,
+        0
+    );
+
+
+    lv_obj_center(
+        sendLabel
+    );
+
+
+    // -----------------------------------------------------
+    // Teclado LVGL
+    // -----------------------------------------------------
+
+    keyboard =
+        lv_keyboard_create(
+            screen
+        );
+
+
+    lv_obj_set_size(
+        keyboard,
+        440,
+        240
+    );
+
+
+    lv_obj_align(
+        keyboard,
+        LV_ALIGN_BOTTOM_MID,
+        0,
+        0
+    );
+
+
+    lv_keyboard_set_textarea(
+        keyboard,
+        messageInput
+    );
+
+
+    lv_obj_add_event_cb(
+        keyboard,
+        keyboardReadyEvent,
+        LV_EVENT_READY,
+        nullptr
+    );
+
+
+    Serial.println(
+        "[AsterDisplay] Interfaz de escritura preparada."
+    );
+
+
+    lv_timer_handler();
+}
+
+
+// ---------------------------------------------------------
+// Mostrar respuesta de Asty
+// ---------------------------------------------------------
+
+void AsterDisplayClass::showReply(
+    const char *reply
+)
+{
+    lv_obj_t *screen =
+        prepareScreen();
+
+
+    // -----------------------------------------------------
+    // Título
+    // -----------------------------------------------------
+
+    lv_obj_t *title =
+        lv_label_create(
+            screen
+        );
+
+
+    lv_label_set_text(
+        title,
+        "ASTY"
     );
 
 
     lv_obj_set_style_text_color(
-        touchButtonLabel,
+        title,
         lv_color_white(),
         0
     );
 
 
     lv_obj_set_style_text_font(
-        touchButtonLabel,
+        title,
         &lv_font_montserrat_36,
         0
     );
 
 
-    lv_obj_set_style_text_align(
-        touchButtonLabel,
-        LV_TEXT_ALIGN_CENTER,
+    lv_obj_align(
+        title,
+        LV_ALIGN_TOP_MID,
+        0,
+        25
+    );
+
+
+    // -----------------------------------------------------
+    // Área desplazable de respuesta
+    // -----------------------------------------------------
+
+    lv_obj_t *responsePanel =
+        lv_obj_create(
+            screen
+        );
+
+
+    lv_obj_set_size(
+        responsePanel,
+        410,
+        275
+    );
+
+
+    lv_obj_align(
+        responsePanel,
+        LV_ALIGN_CENTER,
+        0,
+        0
+    );
+
+
+    lv_obj_set_style_bg_color(
+        responsePanel,
+        lv_color_black(),
+        0
+    );
+
+
+    lv_obj_set_style_bg_opa(
+        responsePanel,
+        LV_OPA_COVER,
+        0
+    );
+
+
+    lv_obj_set_style_border_width(
+        responsePanel,
+        0,
+        0
+    );
+
+
+    lv_obj_set_scroll_dir(
+        responsePanel,
+        LV_DIR_VER
+    );
+
+
+    lv_obj_t *responseLabel =
+        lv_label_create(
+            responsePanel
+        );
+
+
+    lv_obj_set_width(
+        responseLabel,
+        370
+    );
+
+
+    lv_label_set_long_mode(
+        responseLabel,
+        LV_LABEL_LONG_WRAP
+    );
+
+
+    lv_label_set_text(
+        responseLabel,
+        reply
+    );
+
+
+    lv_obj_set_style_text_color(
+        responseLabel,
+        lv_color_white(),
+        0
+    );
+
+
+    lv_obj_set_style_text_font(
+        responseLabel,
+        &lv_font_montserrat_24,
+        0
+    );
+
+
+    lv_obj_align(
+        responseLabel,
+        LV_ALIGN_TOP_MID,
+        0,
+        0
+    );
+
+
+    // -----------------------------------------------------
+    // Nueva pregunta
+    // -----------------------------------------------------
+
+    lv_obj_t *newButton =
+        lv_btn_create(
+            screen
+        );
+
+
+    lv_obj_set_size(
+        newButton,
+        250,
+        55
+    );
+
+
+    lv_obj_align(
+        newButton,
+        LV_ALIGN_BOTTOM_MID,
+        0,
+        -25
+    );
+
+
+    lv_obj_set_style_radius(
+        newButton,
+        22,
+        0
+    );
+
+
+    lv_obj_add_event_cb(
+        newButton,
+        newQuestionEvent,
+        LV_EVENT_CLICKED,
+        nullptr
+    );
+
+
+    lv_obj_t *newLabel =
+        lv_label_create(
+            newButton
+        );
+
+
+    lv_label_set_text(
+        newLabel,
+        "NUEVA PREGUNTA"
+    );
+
+
+    lv_obj_set_style_text_font(
+        newLabel,
+        &lv_font_montserrat_24,
         0
     );
 
 
     lv_obj_center(
-        touchButtonLabel
-    );
-
-
-    // -----------------------------------------------------
-    // Mostrar límites reales calculados por LVGL
-    // -----------------------------------------------------
-
-    lv_obj_update_layout(
-        screen
-    );
-
-
-    lv_area_t area;
-
-
-    lv_obj_get_coords(
-        touchButton,
-        &area
-    );
-
-
-    Serial.println();
-    Serial.println(
-        "===== BOTON LVGL ====="
-    );
-
-
-    Serial.print(
-        "x1="
-    );
-
-    Serial.print(
-        area.x1
-    );
-
-    Serial.print(
-        " x2="
-    );
-
-    Serial.print(
-        area.x2
-    );
-
-    Serial.print(
-        " y1="
-    );
-
-    Serial.print(
-        area.y1
-    );
-
-    Serial.print(
-        " y2="
-    );
-
-    Serial.println(
-        area.y2
-    );
-
-
-    Serial.println(
-        "======================"
+        newLabel
     );
 
 
     lv_timer_handler();
+}
+
+
+// ---------------------------------------------------------
+// Recuperar petición pendiente
+// ---------------------------------------------------------
+
+bool AsterDisplayClass::consumeSendRequest(
+    String &message
+)
+{
+    if (!sendRequested)
+    {
+        return false;
+    }
+
+
+    message =
+        pendingMessage;
+
+
+    pendingMessage =
+        "";
+
+
+    sendRequested =
+        false;
+
+
+    return true;
 }
 
 
@@ -828,7 +1004,7 @@ void AsterDisplayClass::update()
 
 
 // ---------------------------------------------------------
-// Instancia
+// Instancia global
 // ---------------------------------------------------------
 
 AsterDisplayClass AsterDisplay;
