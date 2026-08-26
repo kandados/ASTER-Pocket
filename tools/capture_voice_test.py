@@ -6,11 +6,29 @@ import time
 import wave
 
 import serial
+from serial.tools import list_ports
 
 
-PORT = "/dev/cu.usbmodem2401"
 BAUD = 115200
 RATE = 24000
+
+
+def detect_port():
+    candidates = [
+        port.device
+        for port in list_ports.comports()
+        if "usbmodem" in port.device.lower()
+    ]
+
+    if not candidates:
+        raise RuntimeError(
+            "No se ha encontrado A.S.T.E.R. Pocket por USB."
+        )
+
+    return candidates[0]
+
+
+PORT = detect_port()
 
 desktop = Path.home() / "Desktop"
 
@@ -26,6 +44,7 @@ def write_wav(path, pcm):
         wav.writeframes(pcm)
 
 
+print(f"[Mac] Puerto detectado: {PORT}")
 print("[Mac] Abriendo A.S.T.E.R. Pocket...")
 
 with serial.Serial(
