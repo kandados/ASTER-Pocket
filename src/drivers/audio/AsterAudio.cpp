@@ -334,6 +334,96 @@ bool AsterAudioClass::beginMicrophone()
     return true;
 }
 
+size_t AsterAudioClass::readMonoPcm(
+    int16_t *destination,
+    size_t maxSamples,
+    uint32_t timeoutMs
+)
+{
+    if (
+        !_microphoneReady ||
+        _rxChannel == nullptr ||
+        destination == nullptr ||
+        maxSamples == 0
+    )
+    {
+        return 0;
+    }
+
+    constexpr size_t RAW_FRAMES = 128;
+
+    int16_t rawSamples[
+        RAW_FRAMES *
+        TDM_SLOT_COUNT
+    ];
+
+    size_t totalSamples = 0;
+
+    while (totalSamples < maxSamples)
+    {
+        size_t bytesRead = 0;
+
+        const esp_err_t result =
+            i2s_channel_read(
+                reinterpret_cast<i2s_chan_handle_t>(
+                    _rxChannel
+                ),
+                rawSamples,
+                sizeof(rawSamples),
+                &bytesRead,
+                timeoutMs
+            );
+
+        if (
+            result != ESP_OK ||
+            bytesRead == 0
+        )
+        {
+            break;
+        }
+
+        const size_t receivedSamples =
+            bytesRead /
+            sizeof(int16_t);
+
+        const size_t receivedFrames =
+            receivedSamples /
+            TDM_SLOT_COUNT;
+
+        for (
+            size_t frame = 0;
+            frame < receivedFrames &&
+            totalSamples < maxSamples;
+            ++frame
+        )
+        {
+            const size_t base =
+                frame *
+                TDM_SLOT_COUNT;
+
+            const int32_t left =
+                rawSamples[
+                    base +
+                    SLOT_MIC_LEFT
+                ];
+
+            const int32_t right =
+                rawSamples[
+                    base +
+                    SLOT_MIC_RIGHT
+                ];
+
+            destination[totalSamples++] =
+                static_cast<int16_t>(
+                    (left + right) / 2
+                );
+        }
+    }
+
+    return totalSamples;
+}
+
+
 bool AsterAudioClass::readMicrophoneStats(
     AsterAudioStats &stats,
     uint32_t windowMs

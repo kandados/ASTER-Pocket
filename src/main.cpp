@@ -1,10 +1,13 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <time.h>
+#include <esp_heap_caps.h>
+#include <esp32-hal-psram.h>
 
 #include "drivers/display/AsterDisplay.h"
 #include "drivers/touch/AsterTouch.h"
 #include "drivers/audio/AsterAudio.h"
+#include "drivers/audio/AsterVoice.h"
 #include "core/CoreClient.h"
 #include "secrets.h"
 
@@ -407,48 +410,66 @@ void loop()
 
 
     // -----------------------------------------------------
-    // Pocket v0.9.2 - diagnóstico PCM de micrófonos
+    // Pocket v0.9.3 - prueba de grabación de voz
+    //
+    // En el monitor serie:
+    //   r + Enter
+    //
+    // espera 2 segundos y graba 5 segundos en PSRAM.
     // -----------------------------------------------------
 
-    if (
-        AsterAudio.isMicrophoneReady() &&
-        millis() - lastAudioMeterMs >= 500
-    )
+    if (Serial.available() > 0)
     {
-        lastAudioMeterMs =
-            millis();
+        const char command =
+            static_cast<char>(
+                Serial.read()
+            );
 
-        AsterAudioStats stats;
+        while (Serial.available() > 0)
+        {
+            Serial.read();
+        }
 
         if (
-            AsterAudio.readMicrophoneStats(
-                stats,
-                200
-            )
+            command == 'r' ||
+            command == 'R'
         )
         {
-            Serial.printf(
-                "[PCM] L min=%d max=%d peak=%lu rms=%lu | "
-                "R min=%d max=%d peak=%lu rms=%lu | "
-                "REF min=%d max=%d peak=%lu rms=%lu | "
-                "frames=%lu\n",
-                stats.micLeft.minimum,
-                stats.micLeft.maximum,
-                static_cast<unsigned long>(stats.micLeft.peak),
-                static_cast<unsigned long>(stats.micLeft.rms),
-
-                stats.micRight.minimum,
-                stats.micRight.maximum,
-                static_cast<unsigned long>(stats.micRight.peak),
-                static_cast<unsigned long>(stats.micRight.rms),
-
-                stats.reference.minimum,
-                stats.reference.maximum,
-                static_cast<unsigned long>(stats.reference.peak),
-                static_cast<unsigned long>(stats.reference.rms),
-
-                static_cast<unsigned long>(stats.frames)
+            Serial.println();
+            Serial.println(
+                "[AsterVoice] Grabación solicitada."
             );
+
+            Serial.println(
+                "[AsterVoice] Empieza a hablar en 2 segundos..."
+            );
+
+            delay(
+                2000
+            );
+
+            Serial.println(
+                "[AsterVoice] HABLA AHORA."
+            );
+
+            AsterVoice.record(
+                5000
+            );
+
+            Serial.println(
+                "[AsterVoice] Fin de prueba."
+            );
+
+            Serial.println(
+                "[AsterVoice] Pulsa r para repetir."
+            );
+        }
+        else if (
+            command == 'd' ||
+            command == 'D'
+        )
+        {
+            AsterVoice.dumpBase64();
         }
     }
 

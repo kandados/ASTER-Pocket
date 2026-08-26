@@ -41,6 +41,12 @@ public:
         uint32_t timeoutMs = 50
     );
 
+    size_t readMonoPcm(
+        int16_t *destination,
+        size_t maxSamples,
+        uint32_t timeoutMs = 1000
+    );
+
     bool isMicrophoneReady() const;
 
 private:
