@@ -452,12 +452,105 @@ void loop()
                 "[AsterVoice] HABLA AHORA."
             );
 
-            AsterVoice.record(
-                5000
-            );
+            const bool recorded =
+                AsterVoice.record(
+                    5000
+                );
+
+
+            if (!recorded)
+            {
+                Serial.println(
+                    "[Pocket] ERROR grabando audio."
+                );
+
+                AsterDisplay.showStatus(
+                    "ASTY",
+                    "Error grabando voz"
+                );
+            }
+            else
+            {
+                Serial.println();
+                Serial.println(
+                    "[Pocket] Enviando grabación a Core..."
+                );
+
+
+                AsterDisplay.showStatus(
+                    "ASTY",
+                    "Enviando voz..."
+                );
+
+
+                String receipt;
+
+
+                const bool sent =
+                    CoreClient.sendAudio(
+                        conversationId,
+                        reinterpret_cast<
+                            const uint8_t *
+                        >(
+                            AsterVoice.data()
+                        ),
+                        AsterVoice.byteCount(),
+                        AsterAudio.SAMPLE_RATE,
+                        receipt
+                    );
+
+
+                if (!sent)
+                {
+                    Serial.println(
+                        "[Pocket] ERROR enviando audio a Core."
+                    );
+
+                    AsterDisplay.showStatus(
+                        "ASTY",
+                        "Error enviando voz"
+                    );
+                }
+                else
+                {
+                    Serial.println();
+                    Serial.println(
+                        "================================"
+                    );
+
+                    Serial.println(
+                        "[Pocket] AUDIO RECIBIDO POR CORE"
+                    );
+
+                    Serial.printf(
+                        "[Pocket] Bytes enviados: %lu\n",
+                        static_cast<unsigned long>(
+                            AsterVoice.byteCount()
+                        )
+                    );
+
+                    Serial.printf(
+                        "[Pocket] Duración: %lu ms\n",
+                        static_cast<unsigned long>(
+                            AsterVoice.durationMs()
+                        )
+                    );
+
+                    Serial.println(
+                        "================================"
+                    );
+
+
+                    AsterDisplay.showStatus(
+                        "ASTY",
+                        "Voz recibida por Core"
+                    );
+                }
+            }
+
 
             Serial.println(
-                "[AsterVoice] Fin de prueba."
+                "[AsterVoice] Fin de prueba v0.10b."
             );
 
             Serial.println(

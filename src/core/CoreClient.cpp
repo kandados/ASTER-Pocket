@@ -558,4 +558,300 @@ bool CoreClientClass::sendMessage(
 }
 
 
+// ---------------------------------------------------------
+// Enviar audio PCM de Pocket a Core
+// ---------------------------------------------------------
+
+bool CoreClientClass::sendAudio(
+    const String &conversationId,
+    const uint8_t *audioData,
+    size_t audioBytes,
+    uint32_t sampleRate,
+    String &receipt
+)
+{
+    receipt = "";
+
+
+    if (conversationId.length() == 0)
+    {
+        Serial.println(
+            "[CoreClient] ERROR: conversación no disponible."
+        );
+
+        return false;
+    }
+
+
+    if (
+        audioData == nullptr ||
+        audioBytes == 0
+    )
+    {
+        Serial.println(
+            "[CoreClient] ERROR: audio vacío."
+        );
+
+        return false;
+    }
+
+
+    if (
+        audioBytes %
+        sizeof(int16_t) != 0
+    )
+    {
+        Serial.println(
+            "[CoreClient] ERROR: PCM no alineado a 16 bits."
+        );
+
+        return false;
+    }
+
+
+    if (sampleRate == 0)
+    {
+        Serial.println(
+            "[CoreClient] ERROR: sample rate inválido."
+        );
+
+        return false;
+    }
+
+
+    WiFiClientSecure tlsClient;
+
+    HTTPClient http;
+
+
+    const String url =
+        String(ASTER_CORE_URL) +
+        "/conversations/" +
+        conversationId +
+        "/audio";
+
+
+    Serial.println();
+    Serial.print(
+        "[CoreClient] POST "
+    );
+
+    Serial.println(
+        url
+    );
+
+
+    Serial.println(
+        "[CoreClient] Preparando envío PCM..."
+    );
+
+
+    Serial.printf(
+        "[CoreClient] Audio: %lu bytes, %lu Hz, 16-bit mono\n",
+        static_cast<unsigned long>(
+            audioBytes
+        ),
+        static_cast<unsigned long>(
+            sampleRate
+        )
+    );
+
+
+    if (
+        !beginSecureRequest(
+            http,
+            tlsClient,
+            url
+        )
+    )
+    {
+        return false;
+    }
+
+
+    http.addHeader(
+        "Content-Type",
+        "audio/x-pcm"
+    );
+
+
+    http.addHeader(
+        "X-Audio-Sample-Rate",
+        String(sampleRate)
+    );
+
+
+    http.addHeader(
+        "X-Audio-Bits-Per-Sample",
+        "16"
+    );
+
+
+    http.addHeader(
+        "X-Audio-Channels",
+        "1"
+    );
+
+
+    http.addHeader(
+        "X-Audio-Encoding",
+        "pcm_s16le"
+    );
+
+
+    addAuthenticationHeader(
+        http
+    );
+
+
+    Serial.println(
+        "[CoreClient] Enviando audio a Core..."
+    );
+
+
+    const uint32_t startedAt =
+        millis();
+
+
+    const int status =
+        http.sendRequest(
+            "POST",
+            const_cast<uint8_t *>(
+                audioData
+            ),
+            audioBytes
+        );
+
+
+    const uint32_t elapsed =
+        millis() -
+        startedAt;
+
+
+    const String response =
+        http.getString();
+
+
+    http.end();
+
+
+    Serial.print(
+        "[CoreClient] Audio HTTP: "
+    );
+
+    Serial.println(
+        status
+    );
+
+
+    Serial.printf(
+        "[CoreClient] Tiempo de envío: %lu ms\n",
+        static_cast<unsigned long>(
+            elapsed
+        )
+    );
+
+
+    if (status != 200)
+    {
+        Serial.print(
+            "[CoreClient] ERROR response: "
+        );
+
+        Serial.println(
+            response
+        );
+
+        return false;
+    }
+
+
+    JsonDocument document;
+
+
+    const DeserializationError error =
+        deserializeJson(
+            document,
+            response
+        );
+
+
+    if (error)
+    {
+        Serial.print(
+            "[CoreClient] ERROR JSON audio: "
+        );
+
+        Serial.println(
+            error.c_str()
+        );
+
+        return false;
+    }
+
+
+    const char *receiptStatus =
+        document["status"];
+
+
+    const uint32_t bytesReceived =
+        document["bytes_received"] | 0U;
+
+
+    if (
+        receiptStatus == nullptr ||
+        String(receiptStatus) != "accepted"
+    )
+    {
+        Serial.println(
+            "[CoreClient] ERROR: Core no aceptó el audio."
+        );
+
+        return false;
+    }
+
+
+    if (
+        bytesReceived !=
+        static_cast<uint32_t>(
+            audioBytes
+        )
+    )
+    {
+        Serial.printf(
+            "[CoreClient] ERROR: Core recibió %lu de %lu bytes.\n",
+            static_cast<unsigned long>(
+                bytesReceived
+            ),
+            static_cast<unsigned long>(
+                audioBytes
+            )
+        );
+
+        return false;
+    }
+
+
+    receipt =
+        response;
+
+
+    Serial.println(
+        "[CoreClient] Audio aceptado por Core."
+    );
+
+
+    Serial.print(
+        "[CoreClient] Receipt: "
+    );
+
+    Serial.println(
+        receipt
+    );
+
+
+    return true;
+}
+
+
 CoreClientClass CoreClient;

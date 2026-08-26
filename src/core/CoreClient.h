@@ -20,6 +20,14 @@ public:
         String &model
     );
 
+    bool sendAudio(
+        const String &conversationId,
+        const uint8_t *audioData,
+        size_t audioBytes,
+        uint32_t sampleRate,
+        String &receipt
+    );
+
 private:
     void addAuthenticationHeader(
         class HTTPClient &http
