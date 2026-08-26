@@ -1,0 +1,20 @@
+{
+  "name": "esp_codec_dev",
+  "version": "1.5.10",
+  "description": "Espressif esp_codec_dev - ES7210 subset for A.S.T.E.R. Pocket",
+  "license": "Apache-2.0",
+  "build": {
+    "srcDir": ".",
+    "srcFilter": [
+      "+<device/es7210/es7210.c>"
+    ],
+    "flags": [
+      "-Iinclude",
+      "-Iinterface",
+      "-Idevice/include",
+      "-Idevice/priv_include",
+      "-Idevice/es7210",
+      "-DCONFIG_CODEC_ES7210_SUPPORT=1"
+    ]
+  }
+}

@@ -4,6 +4,7 @@
 
 #include "drivers/display/AsterDisplay.h"
 #include "drivers/touch/AsterTouch.h"
+#include "drivers/audio/AsterAudio.h"
 #include "core/CoreClient.h"
 #include "secrets.h"
 
@@ -19,6 +20,8 @@ static constexpr time_t MINIMUM_VALID_TIME =
 
 
 static String conversationId;
+
+static uint32_t lastAudioMeterMs = 0;
 
 
 // ---------------------------------------------------------
@@ -272,6 +275,29 @@ void setup()
 
 
     // -----------------------------------------------------
+    // Micrófonos / ES7210
+    // -----------------------------------------------------
+
+    Serial.println();
+    Serial.println(
+        "[Pocket] Inicializando micrófonos..."
+    );
+
+    if (!AsterAudio.beginMicrophone())
+    {
+        Serial.println(
+            "[Pocket] ERROR inicializando micrófonos."
+        );
+    }
+    else
+    {
+        Serial.println(
+            "[Pocket] Micrófonos preparados."
+        );
+    }
+
+
+    // -----------------------------------------------------
     // Wi-Fi
     // -----------------------------------------------------
 
@@ -378,6 +404,53 @@ void setup()
 void loop()
 {
     AsterDisplay.update();
+
+
+    // -----------------------------------------------------
+    // Pocket v0.9.2 - diagnóstico PCM de micrófonos
+    // -----------------------------------------------------
+
+    if (
+        AsterAudio.isMicrophoneReady() &&
+        millis() - lastAudioMeterMs >= 500
+    )
+    {
+        lastAudioMeterMs =
+            millis();
+
+        AsterAudioStats stats;
+
+        if (
+            AsterAudio.readMicrophoneStats(
+                stats,
+                200
+            )
+        )
+        {
+            Serial.printf(
+                "[PCM] L min=%d max=%d peak=%lu rms=%lu | "
+                "R min=%d max=%d peak=%lu rms=%lu | "
+                "REF min=%d max=%d peak=%lu rms=%lu | "
+                "frames=%lu\n",
+                stats.micLeft.minimum,
+                stats.micLeft.maximum,
+                static_cast<unsigned long>(stats.micLeft.peak),
+                static_cast<unsigned long>(stats.micLeft.rms),
+
+                stats.micRight.minimum,
+                stats.micRight.maximum,
+                static_cast<unsigned long>(stats.micRight.peak),
+                static_cast<unsigned long>(stats.micRight.rms),
+
+                stats.reference.minimum,
+                stats.reference.maximum,
+                static_cast<unsigned long>(stats.reference.peak),
+                static_cast<unsigned long>(stats.reference.rms),
+
+                static_cast<unsigned long>(stats.frames)
+            );
+        }
+    }
 
 
     String message;
