@@ -567,10 +567,14 @@ bool CoreClientClass::sendAudio(
     const uint8_t *audioData,
     size_t audioBytes,
     uint32_t sampleRate,
-    String &receipt
+    CoreAudioTurnResult &result
 )
 {
-    receipt = "";
+    result.transcription = "";
+    result.answer = "";
+    result.provider = "";
+    result.model = "";
+    result.rawResponse = "";
 
 
     if (conversationId.length() == 0)
@@ -632,6 +636,7 @@ bool CoreClientClass::sendAudio(
 
 
     Serial.println();
+
     Serial.print(
         "[CoreClient] POST "
     );
@@ -642,7 +647,7 @@ bool CoreClientClass::sendAudio(
 
 
     Serial.println(
-        "[CoreClient] Preparando envío PCM..."
+        "[CoreClient] Preparando envío PCM + STT..."
     );
 
 
@@ -705,7 +710,7 @@ bool CoreClientClass::sendAudio(
 
 
     Serial.println(
-        "[CoreClient] Enviando audio a Core..."
+        "[CoreClient] Enviando voz a Core..."
     );
 
 
@@ -736,7 +741,7 @@ bool CoreClientClass::sendAudio(
 
 
     Serial.print(
-        "[CoreClient] Audio HTTP: "
+        "[CoreClient] Audio/STT HTTP: "
     );
 
     Serial.println(
@@ -745,7 +750,7 @@ bool CoreClientClass::sendAudio(
 
 
     Serial.printf(
-        "[CoreClient] Tiempo de envío: %lu ms\n",
+        "[CoreClient] Tiempo total Core: %lu ms\n",
         static_cast<unsigned long>(
             elapsed
         )
@@ -779,7 +784,7 @@ bool CoreClientClass::sendAudio(
     if (error)
     {
         Serial.print(
-            "[CoreClient] ERROR JSON audio: "
+            "[CoreClient] ERROR JSON audio/STT: "
         );
 
         Serial.println(
@@ -789,6 +794,10 @@ bool CoreClientClass::sendAudio(
         return false;
     }
 
+
+    // -----------------------------------------------------
+    // Validación del receipt PCM
+    // -----------------------------------------------------
 
     const char *receiptStatus =
         document["status"];
@@ -832,21 +841,153 @@ bool CoreClientClass::sendAudio(
     }
 
 
-    receipt =
+    // -----------------------------------------------------
+    // Pocket v0.11
+    // Transcripción + turno real de Asty
+    // -----------------------------------------------------
+
+    const char *transcription =
+        document["transcription"];
+
+
+    const char *answer =
+        document
+        ["turn"]
+        ["assistant_message"]
+        ["content"];
+
+
+    const char *provider =
+        document
+        ["turn"]
+        ["assistant_message"]
+        ["provider"];
+
+
+    const char *model =
+        document
+        ["turn"]
+        ["assistant_message"]
+        ["model"];
+
+
+    if (
+        transcription == nullptr ||
+        String(transcription).length() == 0
+    )
+    {
+        Serial.println(
+            "[CoreClient] ERROR: Core no devolvió transcription."
+        );
+
+        Serial.print(
+            "[CoreClient] Response: "
+        );
+
+        Serial.println(
+            response
+        );
+
+        return false;
+    }
+
+
+    if (
+        answer == nullptr ||
+        String(answer).length() == 0
+    )
+    {
+        Serial.println(
+            "[CoreClient] ERROR: Asty no devolvió respuesta."
+        );
+
+        Serial.print(
+            "[CoreClient] Response: "
+        );
+
+        Serial.println(
+            response
+        );
+
+        return false;
+    }
+
+
+    result.transcription =
+        String(transcription);
+
+
+    result.answer =
+        String(answer);
+
+
+    if (provider != nullptr)
+    {
+        result.provider =
+            String(provider);
+    }
+
+
+    if (model != nullptr)
+    {
+        result.model =
+            String(model);
+    }
+
+
+    result.rawResponse =
         response;
 
 
+    Serial.println();
+
     Serial.println(
-        "[CoreClient] Audio aceptado por Core."
+        "========== VOZ / STT =========="
     );
 
 
     Serial.print(
-        "[CoreClient] Receipt: "
+        "[Pocket] TÚ: "
     );
 
     Serial.println(
-        receipt
+        result.transcription
+    );
+
+
+    Serial.println();
+
+    Serial.print(
+        "[Pocket] ASTY: "
+    );
+
+    Serial.println(
+        result.answer
+    );
+
+
+    Serial.println();
+
+    Serial.print(
+        "[Pocket] Provider: "
+    );
+
+    Serial.println(
+        result.provider
+    );
+
+
+    Serial.print(
+        "[Pocket] Model: "
+    );
+
+    Serial.println(
+        result.model
+    );
+
+
+    Serial.println(
+        "================================"
     );
 
 

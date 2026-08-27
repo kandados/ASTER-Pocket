@@ -483,7 +483,7 @@ void loop()
                 );
 
 
-                String receipt;
+                CoreAudioTurnResult voiceResult;
 
 
                 const bool sent =
@@ -496,19 +496,19 @@ void loop()
                         ),
                         AsterVoice.byteCount(),
                         AsterAudio.SAMPLE_RATE,
-                        receipt
+                        voiceResult
                     );
 
 
                 if (!sent)
                 {
                     Serial.println(
-                        "[Pocket] ERROR enviando audio a Core."
+                        "[Pocket] ERROR procesando voz con Core."
                     );
 
                     AsterDisplay.showStatus(
                         "ASTY",
-                        "Error enviando voz"
+                        "Error procesando voz"
                     );
                 }
                 else
@@ -519,21 +519,25 @@ void loop()
                     );
 
                     Serial.println(
-                        "[Pocket] AUDIO RECIBIDO POR CORE"
+                        "[Pocket] VOZ PROCESADA POR ASTY"
                     );
 
-                    Serial.printf(
-                        "[Pocket] Bytes enviados: %lu\n",
-                        static_cast<unsigned long>(
-                            AsterVoice.byteCount()
-                        )
+                    Serial.print(
+                        "[Pocket] TÚ: "
                     );
 
-                    Serial.printf(
-                        "[Pocket] Duración: %lu ms\n",
-                        static_cast<unsigned long>(
-                            AsterVoice.durationMs()
-                        )
+                    Serial.println(
+                        voiceResult.transcription
+                    );
+
+                    Serial.println();
+
+                    Serial.print(
+                        "[Pocket] ASTY: "
+                    );
+
+                    Serial.println(
+                        voiceResult.answer
                     );
 
                     Serial.println(
@@ -541,9 +545,30 @@ void loop()
                     );
 
 
-                    AsterDisplay.showStatus(
-                        "ASTY",
-                        "Voz recibida por Core"
+                    String exchange;
+
+                    exchange.reserve(
+                        voiceResult.transcription.length() +
+                        voiceResult.answer.length() +
+                        32
+                    );
+
+
+                    exchange +=
+                        "TÚ\n";
+
+                    exchange +=
+                        voiceResult.transcription;
+
+                    exchange +=
+                        "\n\nASTY\n";
+
+                    exchange +=
+                        voiceResult.answer;
+
+
+                    AsterDisplay.showReply(
+                        exchange.c_str()
                     );
                 }
             }

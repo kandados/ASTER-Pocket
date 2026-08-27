@@ -3,6 +3,16 @@
 #include <Arduino.h>
 
 
+struct CoreAudioTurnResult
+{
+    String transcription;
+    String answer;
+    String provider;
+    String model;
+    String rawResponse;
+};
+
+
 class CoreClientClass
 {
 public:
@@ -25,7 +35,7 @@ public:
         const uint8_t *audioData,
         size_t audioBytes,
         uint32_t sampleRate,
-        String &receipt
+        CoreAudioTurnResult &result
     );
 
 private:

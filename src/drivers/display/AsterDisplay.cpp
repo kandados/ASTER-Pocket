@@ -6,6 +6,9 @@
 #include <Arduino_GFX_Library.h>
 
 
+LV_FONT_DECLARE(aster_montserrat_24);
+
+
 // ---------------------------------------------------------
 // Waveshare ESP32-S3 Touch AMOLED 1.75"
 // ---------------------------------------------------------
@@ -506,7 +509,7 @@ void AsterDisplayClass::showStatus(
 
     lv_obj_set_style_text_font(
         message,
-        &lv_font_montserrat_24,
+        &aster_montserrat_24,
         0
     );
 
@@ -630,7 +633,7 @@ void AsterDisplayClass::showChatInput()
 
     lv_obj_set_style_text_font(
         messageInput,
-        &lv_font_montserrat_24,
+        &aster_montserrat_24,
         0
     );
 
@@ -689,7 +692,7 @@ void AsterDisplayClass::showChatInput()
 
     lv_obj_set_style_text_font(
         sendLabel,
-        &lv_font_montserrat_24,
+        &aster_montserrat_24,
         0
     );
 
@@ -882,7 +885,7 @@ void AsterDisplayClass::showReply(
 
     lv_obj_set_style_text_font(
         responseLabel,
-        &lv_font_montserrat_24,
+        &aster_montserrat_24,
         0
     );
 
@@ -949,7 +952,7 @@ void AsterDisplayClass::showReply(
 
     lv_obj_set_style_text_font(
         newLabel,
-        &lv_font_montserrat_24,
+        &aster_montserrat_24,
         0
     );
 
