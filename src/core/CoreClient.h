@@ -7,10 +7,23 @@ struct CoreAudioTurnResult
 {
     String transcription;
     String answer;
+
+    String assistantMessageId;
     String provider;
     String model;
     String rawResponse;
 };
+
+using CoreSpeechPcmCallback = bool (*)(
+
+    const int16_t *samples,
+
+    size_t sampleCount,
+
+    void *context
+
+);
+
 
 
 class CoreClientClass
@@ -37,6 +50,19 @@ public:
         uint32_t sampleRate,
         CoreAudioTurnResult &result
     );
+
+    bool streamSpeech(
+
+        const String &conversationId,
+
+        const String &messageId,
+
+        CoreSpeechPcmCallback callback,
+
+        void *context = nullptr
+
+    );
+
 
 private:
     void addAuthenticationHeader(

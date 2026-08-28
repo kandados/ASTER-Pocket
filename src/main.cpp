@@ -320,17 +320,6 @@ void setup()
         Serial.println(
             "[Pocket] Altavoz preparado."
         );
-
-        Serial.println(
-            "[Pocket] Reproduciendo tono de prueba..."
-        );
-
-        if (!AsterAudio.playTestTone())
-        {
-            Serial.println(
-                "[Pocket] ERROR reproduciendo tono."
-            );
-        }
     }
 
 
@@ -604,6 +593,184 @@ void loop()
                     AsterDisplay.showReply(
                         exchange.c_str()
                     );
+
+
+                    // =====================================
+                    // Pocket v0.12 - TTS Asty
+                    // =====================================
+
+                    if (
+
+                        voiceResult.assistantMessageId.length() == 0
+
+                    )
+
+                    {
+
+                        Serial.println(
+
+                            "[Pocket] AVISO: falta assistant_message.id; TTS omitido."
+
+                        );
+
+                    }
+
+                    else if (
+
+                        !AsterAudio.isSpeakerReady()
+
+                    )
+
+                    {
+
+                        Serial.println(
+
+                            "[Pocket] AVISO: altavoz no disponible; TTS omitido."
+
+                        );
+
+                    }
+
+                    else
+
+                    {
+
+                        Serial.println();
+
+                        Serial.println(
+
+                            "[Pocket] Solicitando voz de Asty..."
+
+                        );
+
+
+                        // El PA permanece apagado durante
+                        // la petición HTTPS. Se activa al
+                        // recibir el primer bloque PCM.
+
+                        bool speakerStartedForTts =
+
+                            false;
+
+
+                        const bool speechOk =
+
+                            CoreClient.streamSpeech(
+
+                                conversationId,
+
+                                voiceResult.assistantMessageId,
+
+                                [](
+
+                                    const int16_t *samples,
+
+                                    size_t sampleCount,
+
+                                    void *context
+
+                                ) -> bool
+
+                                {
+
+                                    bool *speakerStarted =
+
+                                        static_cast<bool *>(
+
+                                            context
+
+                                        );
+
+
+                                    if (speakerStarted == nullptr)
+
+                                    {
+
+                                        return false;
+
+                                    }
+
+
+                                    if (!*speakerStarted)
+
+                                    {
+
+                                        if (
+
+                                            !AsterAudio.startSpeakerPlayback()
+
+                                        )
+
+                                        {
+
+                                            return false;
+
+                                        }
+
+
+                                        *speakerStarted =
+
+                                            true;
+
+                                    }
+
+
+                                    return
+
+                                        AsterAudio.playMonoPcm(
+
+                                            samples,
+
+                                            sampleCount,
+
+                                            2000
+
+                                        );
+
+                                },
+
+                                &speakerStartedForTts
+
+                            );
+
+
+                        // Aunque falle el stream a mitad,
+                        // nunca dejar el PA encendido.
+
+                        if (speakerStartedForTts)
+
+                        {
+
+                            AsterAudio.stopSpeakerPlayback();
+
+                        }
+
+
+                        if (speechOk)
+
+                        {
+
+                            Serial.println(
+
+                                "[Pocket] Voz de Asty reproducida."
+
+                            );
+
+                        }
+
+                        else
+
+                        {
+
+                            Serial.println(
+
+                                "[Pocket] ERROR reproduciendo TTS de Asty."
+
+                            );
+
+                        }
+
+                    }
                 }
             }
 

@@ -30,6 +30,10 @@ public:
     bool beginMicrophone();
     bool beginSpeaker();
 
+    bool startSpeakerPlayback();
+
+    bool stopSpeakerPlayback();
+
     bool playTestTone(
         uint32_t frequencyHz = 880,
         uint32_t durationMs = 350

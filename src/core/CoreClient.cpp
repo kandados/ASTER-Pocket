@@ -572,6 +572,8 @@ bool CoreClientClass::sendAudio(
 {
     result.transcription = "";
     result.answer = "";
+
+    result.assistantMessageId = "";
     result.provider = "";
     result.model = "";
     result.rawResponse = "";
@@ -857,6 +859,17 @@ bool CoreClientClass::sendAudio(
         ["content"];
 
 
+    const char *assistantMessageId =
+
+        document
+
+        ["turn"]
+
+        ["assistant_message"]
+
+        ["id"];
+
+
     const char *provider =
         document
         ["turn"]
@@ -919,6 +932,17 @@ bool CoreClientClass::sendAudio(
 
     result.answer =
         String(answer);
+
+
+    if (assistantMessageId != nullptr)
+
+    {
+
+        result.assistantMessageId =
+
+            String(assistantMessageId);
+
+    }
 
 
     if (provider != nullptr)
@@ -992,6 +1016,614 @@ bool CoreClientClass::sendAudio(
 
 
     return true;
+}
+
+
+
+
+// ---------------------------------------------------------
+// Adaptador de stream HTTPS -> PCM 16-bit little-endian
+// ---------------------------------------------------------
+
+namespace
+{
+
+class CoreSpeechPcmSink final : public Stream
+
+{
+
+public:
+
+    CoreSpeechPcmSink(
+
+        CoreSpeechPcmCallback callback,
+
+        void *context
+
+    )
+
+        : _callback(callback),
+
+          _context(context)
+
+    {
+
+    }
+
+
+    size_t write(
+
+        uint8_t value
+
+    ) override
+
+    {
+
+        return write(
+
+            &value,
+
+            1
+
+        );
+
+    }
+
+
+    size_t write(
+
+        const uint8_t *buffer,
+
+        size_t size
+
+    ) override
+
+    {
+
+        if (
+
+            _failed ||
+
+            buffer == nullptr ||
+
+            size == 0
+
+        )
+
+        {
+
+            return 0;
+
+        }
+
+
+        size_t offset = 0;
+
+
+        // Una muestra int16 puede quedar dividida entre
+        // dos bloques recibidos por HTTPS.
+
+        if (_hasPendingByte)
+
+        {
+
+            const uint16_t raw =
+
+                static_cast<uint16_t>(
+
+                    _pendingByte
+
+                ) |
+
+                (
+
+                    static_cast<uint16_t>(
+
+                        buffer[0]
+
+                    ) << 8
+
+                );
+
+
+            const int16_t sample =
+
+                static_cast<int16_t>(
+
+                    raw
+
+                );
+
+
+            if (
+
+                !_callback(
+
+                    &sample,
+
+                    1,
+
+                    _context
+
+                )
+
+            )
+
+            {
+
+                _failed = true;
+
+                return 0;
+
+            }
+
+
+            _hasPendingByte = false;
+
+            offset = 1;
+
+        }
+
+
+        constexpr size_t CHUNK_SAMPLES = 256;
+
+        int16_t samples[CHUNK_SAMPLES];
+
+
+        while (
+
+            offset + 1 < size
+
+        )
+
+        {
+
+            const size_t availableSamples =
+
+                (
+
+                    size - offset
+
+                ) /
+
+                2;
+
+
+            const size_t sampleCount =
+
+                availableSamples < CHUNK_SAMPLES
+
+                    ? availableSamples
+
+                    : CHUNK_SAMPLES;
+
+
+            for (
+
+                size_t i = 0;
+
+                i < sampleCount;
+
+                ++i
+
+            )
+
+            {
+
+                const size_t byteOffset =
+
+                    offset +
+
+                    i * 2;
+
+
+                const uint16_t raw =
+
+                    static_cast<uint16_t>(
+
+                        buffer[byteOffset]
+
+                    ) |
+
+                    (
+
+                        static_cast<uint16_t>(
+
+                            buffer[byteOffset + 1]
+
+                        ) << 8
+
+                    );
+
+
+                samples[i] =
+
+                    static_cast<int16_t>(
+
+                        raw
+
+                    );
+
+            }
+
+
+            if (
+
+                !_callback(
+
+                    samples,
+
+                    sampleCount,
+
+                    _context
+
+                )
+
+            )
+
+            {
+
+                _failed = true;
+
+                return offset;
+
+            }
+
+
+            offset +=
+
+                sampleCount *
+
+                2;
+
+        }
+
+
+        if (offset < size)
+
+        {
+
+            _pendingByte = buffer[offset];
+
+            _hasPendingByte = true;
+
+            ++offset;
+
+        }
+
+
+        _bytesReceived += offset;
+
+        return offset;
+
+    }
+
+
+    int available() override
+
+    {
+
+        return 0;
+
+    }
+
+
+    int read() override
+
+    {
+
+        return -1;
+
+    }
+
+
+    int peek() override
+
+    {
+
+        return -1;
+
+    }
+
+
+    void flush() override
+
+    {
+
+    }
+
+
+    bool finish() const
+
+    {
+
+        return
+
+            !_failed &&
+
+            !_hasPendingByte &&
+
+            _bytesReceived > 0;
+
+    }
+
+
+    size_t bytesReceived() const
+
+    {
+
+        return _bytesReceived;
+
+    }
+
+
+private:
+
+    CoreSpeechPcmCallback _callback = nullptr;
+
+    void *_context = nullptr;
+
+    bool _failed = false;
+
+    bool _hasPendingByte = false;
+
+    uint8_t _pendingByte = 0;
+
+    size_t _bytesReceived = 0;
+
+};
+
+}
+
+
+// ---------------------------------------------------------
+// Descargar TTS PCM de Asty
+// ---------------------------------------------------------
+
+bool CoreClientClass::streamSpeech(
+
+    const String &conversationId,
+
+    const String &messageId,
+
+    CoreSpeechPcmCallback callback,
+
+    void *context
+
+)
+
+{
+
+    if (
+
+        conversationId.length() == 0 ||
+
+        messageId.length() == 0 ||
+
+        callback == nullptr
+
+    )
+
+    {
+
+        Serial.println(
+
+            "[CoreClient] ERROR: parámetros TTS inválidos."
+
+        );
+
+        return false;
+
+    }
+
+
+    WiFiClientSecure tlsClient;
+
+    HTTPClient http;
+
+
+    const String url =
+
+        String(ASTER_CORE_URL) +
+
+        "/conversations/" +
+
+        conversationId +
+
+        "/messages/" +
+
+        messageId +
+
+        "/speech";
+
+
+    Serial.println();
+
+    Serial.print(
+
+        "[CoreClient] GET "
+
+    );
+
+    Serial.println(
+
+        url
+
+    );
+
+
+    Serial.println(
+
+        "[CoreClient] Solicitando TTS PCM de Asty..."
+
+    );
+
+
+    if (
+
+        !beginSecureRequest(
+
+            http,
+
+            tlsClient,
+
+            url
+
+        )
+
+    )
+
+    {
+
+        return false;
+
+    }
+
+
+    http.addHeader(
+
+        "Accept",
+
+        "audio/x-pcm"
+
+    );
+
+
+    addAuthenticationHeader(
+
+        http
+
+    );
+
+
+    const uint32_t startedAt = millis();
+
+
+    const int status =
+
+        http.GET();
+
+
+    Serial.print(
+
+        "[CoreClient] Speech HTTP: "
+
+    );
+
+    Serial.println(
+
+        status
+
+    );
+
+
+    if (status != 200)
+
+    {
+
+        const String response =
+
+            http.getString();
+
+
+        Serial.print(
+
+            "[CoreClient] ERROR speech: "
+
+        );
+
+        Serial.println(
+
+            response
+
+        );
+
+
+        http.end();
+
+        return false;
+
+    }
+
+
+    CoreSpeechPcmSink sink(
+
+        callback,
+
+        context
+
+    );
+
+
+    const int streamedBytes =
+
+        http.writeToStream(
+
+            &sink
+
+        );
+
+
+    const uint32_t elapsed =
+
+        millis() -
+
+        startedAt;
+
+
+    const bool validPcm =
+
+        streamedBytes >= 0 &&
+
+        sink.finish();
+
+
+    Serial.printf(
+
+        "[CoreClient] Speech recibido: %lu bytes en %lu ms\n",
+
+        static_cast<unsigned long>(
+
+            sink.bytesReceived()
+
+        ),
+
+        static_cast<unsigned long>(
+
+            elapsed
+
+        )
+
+    );
+
+
+    http.end();
+
+
+    if (!validPcm)
+
+    {
+
+        Serial.println(
+
+            "[CoreClient] ERROR: stream PCM TTS incompleto."
+
+        );
+
+        return false;
+
+    }
+
+
+    Serial.println(
+
+        "[CoreClient] TTS PCM completado."
+
+    );
+
+
+    return true;
+
 }
 
 
