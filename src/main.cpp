@@ -301,6 +301,40 @@ void setup()
 
 
     // -----------------------------------------------------
+    // Altavoz / ES8311 - validación física v0.12
+    // -----------------------------------------------------
+
+    Serial.println();
+    Serial.println(
+        "[Pocket] Inicializando altavoz..."
+    );
+
+    if (!AsterAudio.beginSpeaker())
+    {
+        Serial.println(
+            "[Pocket] ERROR inicializando altavoz."
+        );
+    }
+    else
+    {
+        Serial.println(
+            "[Pocket] Altavoz preparado."
+        );
+
+        Serial.println(
+            "[Pocket] Reproduciendo tono de prueba..."
+        );
+
+        if (!AsterAudio.playTestTone())
+        {
+            Serial.println(
+                "[Pocket] ERROR reproduciendo tono."
+            );
+        }
+    }
+
+
+    // -----------------------------------------------------
     // Wi-Fi
     // -----------------------------------------------------
 

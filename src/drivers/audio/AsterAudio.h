@@ -28,6 +28,18 @@ public:
     static constexpr uint8_t TDM_SLOT_COUNT = 4;
 
     bool beginMicrophone();
+    bool beginSpeaker();
+
+    bool playTestTone(
+        uint32_t frequencyHz = 880,
+        uint32_t durationMs = 350
+    );
+
+    bool playMonoPcm(
+        const int16_t *samples,
+        size_t sampleCount,
+        uint32_t timeoutMs = 1000
+    );
 
     bool readMicrophoneLevels(
         uint32_t &micLeft,
@@ -48,12 +60,17 @@ public:
     );
 
     bool isMicrophoneReady() const;
+    bool isSpeakerReady() const;
 
 private:
+    void *_txChannel = nullptr;
     void *_rxChannel = nullptr;
+
+    void *_speakerCodec = nullptr;
     const void *_microphoneCodec = nullptr;
 
     bool _microphoneReady = false;
+    bool _speakerReady = false;
 };
 
 extern AsterAudioClass AsterAudio;

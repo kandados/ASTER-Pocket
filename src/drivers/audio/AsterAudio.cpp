@@ -7,10 +7,12 @@
 #include <limits>
 
 extern "C" {
+#include "driver/i2s_std.h"
 #include "driver/i2s_tdm.h"
 #include "es7210_adc.h"
 #include "audio_codec_if.h"
 #include "esp_codec_dev_types.h"
+#include "es8311.h"
 }
 
 namespace
@@ -18,9 +20,15 @@ namespace
     constexpr gpio_num_t PIN_I2S_MCLK = GPIO_NUM_42;
     constexpr gpio_num_t PIN_I2S_BCLK = GPIO_NUM_9;
     constexpr gpio_num_t PIN_I2S_WS   = GPIO_NUM_45;
+    constexpr gpio_num_t PIN_I2S_DOUT = GPIO_NUM_8;
     constexpr gpio_num_t PIN_I2S_DIN  = GPIO_NUM_10;
 
+    constexpr gpio_num_t PIN_SPEAKER_PA = GPIO_NUM_46;
+
     constexpr i2s_port_t I2S_PORT = I2S_NUM_0;
+
+    constexpr int SPEAKER_VOLUME = 60;
+    constexpr int16_t TEST_TONE_AMPLITUDE = 6000;
 
     constexpr size_t AUDIO_FRAME_COUNT = 128;
 
@@ -47,13 +55,10 @@ bool AsterAudioClass::beginMicrophone()
     }
 
     Serial.println(
-        "[AsterAudio] Inicializando..."
+        "[AsterAudio] Inicializando I2S TX STD + RX TDM..."
     );
 
-    // -----------------------------------------------------
-    // I2S RX en modo TDM
-    // -----------------------------------------------------
-
+    i2s_chan_handle_t txChannel = nullptr;
     i2s_chan_handle_t rxChannel = nullptr;
 
     i2s_chan_config_t channelConfig =
@@ -65,90 +70,188 @@ bool AsterAudioClass::beginMicrophone()
     esp_err_t result =
         i2s_new_channel(
             &channelConfig,
-            nullptr,
+            &txChannel,
             &rxChannel
         );
 
     if (result != ESP_OK)
     {
         Serial.printf(
-            "[AsterAudio] ERROR creando I2S RX: %d\n",
+            "[AsterAudio] ERROR creando I2S dúplex: %d\n",
             static_cast<int>(result)
         );
 
         return false;
     }
 
-    i2s_tdm_clk_config_t clockConfig =
+    auto cleanupChannels = [&]()
+    {
+        if (rxChannel != nullptr)
+        {
+            i2s_channel_disable(rxChannel);
+            i2s_del_channel(rxChannel);
+            rxChannel = nullptr;
+        }
+
+        if (txChannel != nullptr)
+        {
+            i2s_channel_disable(txChannel);
+            i2s_del_channel(txChannel);
+            txChannel = nullptr;
+        }
+    };
+
+    // -----------------------------------------------------
+    // TX: ES8311
+    // 24 kHz / 16-bit / I2S estándar estéreo
+    // -----------------------------------------------------
+
+    i2s_std_config_t txConfig{};
+
+    txConfig.clk_cfg =
+        I2S_STD_CLK_DEFAULT_CONFIG(
+            SAMPLE_RATE
+        );
+
+    txConfig.clk_cfg.mclk_multiple =
+        I2S_MCLK_MULTIPLE_256;
+
+    txConfig.slot_cfg =
+        I2S_STD_PHILIP_SLOT_DEFAULT_CONFIG(
+            I2S_DATA_BIT_WIDTH_16BIT,
+            I2S_SLOT_MODE_STEREO
+        );
+
+    txConfig.gpio_cfg.mclk =
+        PIN_I2S_MCLK;
+
+    txConfig.gpio_cfg.bclk =
+        PIN_I2S_BCLK;
+
+    txConfig.gpio_cfg.ws =
+        PIN_I2S_WS;
+
+    txConfig.gpio_cfg.dout =
+        PIN_I2S_DOUT;
+
+    txConfig.gpio_cfg.din =
+        I2S_GPIO_UNUSED;
+
+    txConfig.gpio_cfg.invert_flags.mclk_inv =
+        false;
+
+    txConfig.gpio_cfg.invert_flags.bclk_inv =
+        false;
+
+    txConfig.gpio_cfg.invert_flags.ws_inv =
+        false;
+
+    result =
+        i2s_channel_init_std_mode(
+            txChannel,
+            &txConfig
+        );
+
+    if (result != ESP_OK)
+    {
+        Serial.printf(
+            "[AsterAudio] ERROR configurando I2S TX: %d\n",
+            static_cast<int>(result)
+        );
+
+        cleanupChannels();
+        return false;
+    }
+
+    // -----------------------------------------------------
+    // RX: ES7210
+    // 24 kHz / 16-bit / TDM 4 slots
+    // -----------------------------------------------------
+
+    i2s_tdm_clk_config_t rxClockConfig =
         I2S_TDM_CLK_DEFAULT_CONFIG(
             SAMPLE_RATE
         );
 
-    clockConfig.mclk_multiple =
+    rxClockConfig.mclk_multiple =
         I2S_MCLK_MULTIPLE_256;
 
-    clockConfig.bclk_div =
+    rxClockConfig.bclk_div =
         8;
 
-    i2s_tdm_slot_config_t slotConfig =
+    i2s_tdm_slot_config_t rxSlotConfig =
         I2S_TDM_PHILIP_SLOT_DEFAULT_CONFIG(
             I2S_DATA_BIT_WIDTH_16BIT,
             I2S_SLOT_MODE_STEREO,
             TDM_SLOT_MASK
         );
 
-    slotConfig.total_slot =
+    rxSlotConfig.total_slot =
         TDM_SLOT_COUNT;
 
-    i2s_tdm_config_t tdmConfig{};
+    i2s_tdm_config_t rxConfig{};
 
-    tdmConfig.clk_cfg =
-        clockConfig;
+    rxConfig.clk_cfg =
+        rxClockConfig;
 
-    tdmConfig.slot_cfg =
-        slotConfig;
+    rxConfig.slot_cfg =
+        rxSlotConfig;
 
-    tdmConfig.gpio_cfg.mclk =
+    rxConfig.gpio_cfg.mclk =
         PIN_I2S_MCLK;
 
-    tdmConfig.gpio_cfg.bclk =
+    rxConfig.gpio_cfg.bclk =
         PIN_I2S_BCLK;
 
-    tdmConfig.gpio_cfg.ws =
+    rxConfig.gpio_cfg.ws =
         PIN_I2S_WS;
 
-    tdmConfig.gpio_cfg.dout =
+    rxConfig.gpio_cfg.dout =
         I2S_GPIO_UNUSED;
 
-    tdmConfig.gpio_cfg.din =
+    rxConfig.gpio_cfg.din =
         PIN_I2S_DIN;
 
-    tdmConfig.gpio_cfg.invert_flags.mclk_inv =
+    rxConfig.gpio_cfg.invert_flags.mclk_inv =
         false;
 
-    tdmConfig.gpio_cfg.invert_flags.bclk_inv =
+    rxConfig.gpio_cfg.invert_flags.bclk_inv =
         false;
 
-    tdmConfig.gpio_cfg.invert_flags.ws_inv =
+    rxConfig.gpio_cfg.invert_flags.ws_inv =
         false;
 
     result =
         i2s_channel_init_tdm_mode(
             rxChannel,
-            &tdmConfig
+            &rxConfig
         );
 
     if (result != ESP_OK)
     {
         Serial.printf(
-            "[AsterAudio] ERROR configurando TDM: %d\n",
+            "[AsterAudio] ERROR configurando I2S RX TDM: %d\n",
             static_cast<int>(result)
         );
 
-        i2s_del_channel(
-            rxChannel
+        cleanupChannels();
+        return false;
+    }
+
+    // Waveshare habilita TX antes de RX en este perfil.
+    result =
+        i2s_channel_enable(
+            txChannel
         );
 
+    if (result != ESP_OK)
+    {
+        Serial.printf(
+            "[AsterAudio] ERROR activando I2S TX: %d\n",
+            static_cast<int>(result)
+        );
+
+        cleanupChannels();
         return false;
     }
 
@@ -160,23 +263,28 @@ bool AsterAudioClass::beginMicrophone()
     if (result != ESP_OK)
     {
         Serial.printf(
-            "[AsterAudio] ERROR activando I2S: %d\n",
+            "[AsterAudio] ERROR activando I2S RX: %d\n",
             static_cast<int>(result)
         );
 
-        i2s_del_channel(
-            rxChannel
-        );
-
+        cleanupChannels();
         return false;
     }
 
     Serial.println(
-        "[AsterAudio] RX TDM 24 kHz activo."
+        "[AsterAudio] I2S dúplex 24 kHz activo."
     );
 
     // -----------------------------------------------------
-    // Control I2C compartido con el táctil
+    // ES7210
+    //
+    // El bus I2C ya pertenece a la capa hardware/táctil.
+    // NO llamar Wire.begin() aquí.
+    //
+    // Slot 0 = MIC1 frontal
+    // Slot 1 = referencia de reproducción
+    // Slot 2 = MIC2 frontal
+    // Slot 3 = no conectado
     // -----------------------------------------------------
 
     const audio_codec_ctrl_if_t *control =
@@ -185,28 +293,12 @@ bool AsterAudioClass::beginMicrophone()
     if (control == nullptr)
     {
         Serial.println(
-            "[AsterAudio] ERROR creando control I2C."
+            "[AsterAudio] ERROR creando control I2C ES7210."
         );
 
-        i2s_channel_disable(
-            rxChannel
-        );
-
-        i2s_del_channel(
-            rxChannel
-        );
-
+        cleanupChannels();
         return false;
     }
-
-    // -----------------------------------------------------
-    // ES7210
-    //
-    // Slot 0 = MIC1 frontal
-    // Slot 1 = referencia acústica
-    // Slot 2 = MIC2 frontal
-    // Slot 3 = no conectado
-    // -----------------------------------------------------
 
     es7210_codec_cfg_t codecConfig{};
 
@@ -238,14 +330,7 @@ bool AsterAudioClass::beginMicrophone()
             "[AsterAudio] ERROR inicializando ES7210."
         );
 
-        i2s_channel_disable(
-            rxChannel
-        );
-
-        i2s_del_channel(
-            rxChannel
-        );
-
+        cleanupChannels();
         return false;
     }
 
@@ -277,14 +362,7 @@ bool AsterAudioClass::beginMicrophone()
             "[AsterAudio] ERROR configurando ES7210."
         );
 
-        i2s_channel_disable(
-            rxChannel
-        );
-
-        i2s_del_channel(
-            rxChannel
-        );
-
+        cleanupChannels();
         return false;
     }
 
@@ -299,16 +377,14 @@ bool AsterAudioClass::beginMicrophone()
             "[AsterAudio] ERROR activando ES7210."
         );
 
-        i2s_channel_disable(
-            rxChannel
-        );
-
-        i2s_del_channel(
-            rxChannel
-        );
-
+        cleanupChannels();
         return false;
     }
+
+    _txChannel =
+        reinterpret_cast<void *>(
+            txChannel
+        );
 
     _rxChannel =
         reinterpret_cast<void *>(
@@ -333,6 +409,7 @@ bool AsterAudioClass::beginMicrophone()
 
     return true;
 }
+
 
 size_t AsterAudioClass::readMonoPcm(
     int16_t *destination,
@@ -683,7 +760,442 @@ bool AsterAudioClass::readMicrophoneLevels(
     return true;
 }
 
+
+bool AsterAudioClass::beginSpeaker()
+{
+    if (_speakerReady)
+    {
+        return true;
+    }
+
+    if (_txChannel == nullptr)
+    {
+        Serial.println(
+            "[AsterAudio] ERROR: I2S TX no está preparado."
+        );
+
+        return false;
+    }
+
+    Serial.println(
+        "[AsterAudio] Inicializando ES8311..."
+    );
+
+    pinMode(
+        PIN_SPEAKER_PA,
+        OUTPUT
+    );
+
+    // Mantener el amplificador apagado durante la
+    // configuración del codec para reducir pops.
+    digitalWrite(
+        PIN_SPEAKER_PA,
+        LOW
+    );
+
+    es8311_handle_t codec =
+        es8311_create(
+            0,
+            ES8311_ADDRRES_0
+        );
+
+    if (codec == nullptr)
+    {
+        Serial.println(
+            "[AsterAudio] ERROR creando ES8311."
+        );
+
+        return false;
+    }
+
+    const es8311_clock_config_t clockConfig =
+    {
+        .mclk_inverted = false,
+        .sclk_inverted = false,
+        .mclk_from_mclk_pin = true,
+        .mclk_frequency =
+            static_cast<int>(
+                SAMPLE_RATE * 256
+            ),
+        .sample_frequency =
+            static_cast<int>(
+                SAMPLE_RATE
+            )
+    };
+
+    esp_err_t result =
+        es8311_init(
+            codec,
+            &clockConfig,
+            ES8311_RESOLUTION_16,
+            ES8311_RESOLUTION_16
+        );
+
+    if (result != ESP_OK)
+    {
+        Serial.printf(
+            "[AsterAudio] ERROR inicializando ES8311: %d\n",
+            static_cast<int>(result)
+        );
+
+        es8311_delete(codec);
+        return false;
+    }
+
+    result =
+        es8311_sample_frequency_config(
+            codec,
+            clockConfig.mclk_frequency,
+            clockConfig.sample_frequency
+        );
+
+    if (result != ESP_OK)
+    {
+        Serial.printf(
+            "[AsterAudio] ERROR configurando frecuencia ES8311: %d\n",
+            static_cast<int>(result)
+        );
+
+        es8311_delete(codec);
+        return false;
+    }
+
+    result =
+        es8311_microphone_config(
+            codec,
+            false
+        );
+
+    if (result != ESP_OK)
+    {
+        Serial.printf(
+            "[AsterAudio] ERROR configurando ES8311: %d\n",
+            static_cast<int>(result)
+        );
+
+        es8311_delete(codec);
+        return false;
+    }
+
+    result =
+        es8311_voice_volume_set(
+            codec,
+            SPEAKER_VOLUME,
+            nullptr
+        );
+
+    if (result != ESP_OK)
+    {
+        Serial.printf(
+            "[AsterAudio] ERROR ajustando volumen ES8311: %d\n",
+            static_cast<int>(result)
+        );
+
+        es8311_delete(codec);
+        return false;
+    }
+
+    result =
+        es8311_voice_mute(
+            codec,
+            false
+        );
+
+    if (result != ESP_OK)
+    {
+        Serial.printf(
+            "[AsterAudio] ERROR quitando mute ES8311: %d\n",
+            static_cast<int>(result)
+        );
+
+        es8311_delete(codec);
+        return false;
+    }
+
+    digitalWrite(
+        PIN_SPEAKER_PA,
+        HIGH
+    );
+
+    delay(
+        10
+    );
+
+    _speakerCodec =
+        reinterpret_cast<void *>(
+            codec
+        );
+
+    _speakerReady =
+        true;
+
+    Serial.printf(
+        "[AsterAudio] ES8311 activo a %lu Hz. PA GPIO46=HIGH.\n",
+        static_cast<unsigned long>(
+            SAMPLE_RATE
+        )
+    );
+
+    return true;
+}
+
+
+bool AsterAudioClass::playMonoPcm(
+    const int16_t *samples,
+    size_t sampleCount,
+    uint32_t timeoutMs
+)
+{
+    if (
+        !_speakerReady ||
+        _txChannel == nullptr ||
+        samples == nullptr ||
+        sampleCount == 0
+    )
+    {
+        return false;
+    }
+
+    constexpr size_t CHUNK_FRAMES =
+        256;
+
+    int16_t stereo[
+        CHUNK_FRAMES * 2
+    ];
+
+    size_t offset =
+        0;
+
+    while (offset < sampleCount)
+    {
+        const size_t remaining =
+            sampleCount - offset;
+
+        const size_t frames =
+            remaining < CHUNK_FRAMES
+                ? remaining
+                : CHUNK_FRAMES;
+
+        for (
+            size_t i = 0;
+            i < frames;
+            ++i
+        )
+        {
+            const int16_t sample =
+                samples[
+                    offset + i
+                ];
+
+            stereo[
+                i * 2
+            ] = sample;
+
+            stereo[
+                i * 2 + 1
+            ] = sample;
+        }
+
+        const size_t bytesToWrite =
+            frames *
+            2 *
+            sizeof(int16_t);
+
+        size_t bytesWritten =
+            0;
+
+        const esp_err_t result =
+            i2s_channel_write(
+                reinterpret_cast<i2s_chan_handle_t>(
+                    _txChannel
+                ),
+                stereo,
+                bytesToWrite,
+                &bytesWritten,
+                timeoutMs
+            );
+
+        if (
+            result != ESP_OK ||
+            bytesWritten != bytesToWrite
+        )
+        {
+            Serial.printf(
+                "[AsterAudio] ERROR escribiendo I2S TX: err=%d bytes=%lu/%lu\n",
+                static_cast<int>(result),
+                static_cast<unsigned long>(
+                    bytesWritten
+                ),
+                static_cast<unsigned long>(
+                    bytesToWrite
+                )
+            );
+
+            return false;
+        }
+
+        offset +=
+            frames;
+    }
+
+    return true;
+}
+
+
+bool AsterAudioClass::playTestTone(
+    uint32_t frequencyHz,
+    uint32_t durationMs
+)
+{
+    if (
+        !_speakerReady ||
+        frequencyHz == 0 ||
+        durationMs == 0
+    )
+    {
+        return false;
+    }
+
+    Serial.printf(
+        "[AsterAudio] Tono de prueba: %lu Hz / %lu ms\n",
+        static_cast<unsigned long>(
+            frequencyHz
+        ),
+        static_cast<unsigned long>(
+            durationMs
+        )
+    );
+
+    constexpr size_t CHUNK_FRAMES =
+        256;
+
+    constexpr double ASTER_TWO_PI =
+        6.28318530717958647692;
+
+    int16_t mono[
+        CHUNK_FRAMES
+    ];
+
+    const size_t totalFrames =
+        static_cast<size_t>(
+            (
+                static_cast<uint64_t>(
+                    SAMPLE_RATE
+                ) *
+                durationMs
+            ) /
+            1000
+        );
+
+    const double phaseStep =
+        ASTER_TWO_PI *
+        static_cast<double>(
+            frequencyHz
+        ) /
+        static_cast<double>(
+            SAMPLE_RATE
+        );
+
+    double phase =
+        0.0;
+
+    size_t generated =
+        0;
+
+    while (generated < totalFrames)
+    {
+        const size_t remaining =
+            totalFrames - generated;
+
+        const size_t frames =
+            remaining < CHUNK_FRAMES
+                ? remaining
+                : CHUNK_FRAMES;
+
+        for (
+            size_t i = 0;
+            i < frames;
+            ++i
+        )
+        {
+            mono[i] =
+                static_cast<int16_t>(
+                    std::sin(
+                        phase
+                    ) *
+                    TEST_TONE_AMPLITUDE
+                );
+
+            phase +=
+                phaseStep;
+
+            if (phase >= ASTER_TWO_PI)
+            {
+                phase -=
+                    ASTER_TWO_PI;
+            }
+        }
+
+        if (
+            !playMonoPcm(
+                mono,
+                frames,
+                1000
+            )
+        )
+        {
+            return false;
+        }
+
+        generated +=
+            frames;
+    }
+
+    // Un pequeño bloque de silencio deja la salida
+    // en cero después del tono.
+    int16_t silence[128]{};
+
+    playMonoPcm(
+        silence,
+        128,
+        1000
+    );
+
+    // Finalizada la prueba: silenciar el codec y
+    // apagar el amplificador para evitar ruido en reposo.
+    if (_speakerCodec != nullptr)
+    {
+        es8311_voice_mute(
+            reinterpret_cast<es8311_handle_t>(
+                _speakerCodec
+            ),
+            true
+        );
+    }
+
+    digitalWrite(
+        PIN_SPEAKER_PA,
+        LOW
+    );
+
+    Serial.println(
+        "[AsterAudio] Tono enviado al altavoz."
+    );
+
+    Serial.println(
+        "[AsterAudio] Altavoz silenciado. PA GPIO46=LOW."
+    );
+
+    return true;
+}
+
+
 bool AsterAudioClass::isMicrophoneReady() const
 {
     return _microphoneReady;
+}
+
+bool AsterAudioClass::isSpeakerReady() const
+{
+    return _speakerReady;
 }
