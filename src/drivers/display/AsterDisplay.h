@@ -16,6 +16,16 @@ public:
 
     void showChatInput();
 
+    void showVolumeControl();
+
+    void setVolumeLevel(
+        uint8_t volume
+    );
+
+    bool consumeVolumeChange(
+        uint8_t &volume
+    );
+
     void showReply(
         const char *reply
     );

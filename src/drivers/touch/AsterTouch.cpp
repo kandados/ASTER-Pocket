@@ -237,76 +237,225 @@ bool AsterTouchClass::begin()
 // ---------------------------------------------------------
 
 void AsterTouchClass::read(
+
     lv_indev_drv_t *driver,
+
     lv_indev_data_t *data
+
 )
+
 {
+
     (void)driver;
 
 
+    // -----------------------------------------------------
+    // Estado persistente del puntero
+    //
+    // Cuando comienza un toque seguimos consultando el
+    // CST9217 aunque no llegue una IRQ nueva. De esta forma
+    // LVGL conserva correctamente PRESSED durante arrastres.
+    // -----------------------------------------------------
+
+    static bool pointerPressed =
+        false;
+
+    static int16_t lastX =
+        0;
+
+    static int16_t lastY =
+        0;
+
+    static int16_t lastLoggedX =
+        -1000;
+
+    static int16_t lastLoggedY =
+        -1000;
+
+
     if (!initialized)
+
     {
+
+        pointerPressed =
+            false;
+
         data->state =
             LV_INDEV_STATE_REL;
 
         return;
+
     }
 
 
-    if (!touchInterrupt)
+    // En reposo no hacemos tráfico I2C innecesario.
+    // Una IRQ inicia la lectura.
+    //
+    // Mientras el dedo siga pulsando sí interrogamos el
+    // controlador en cada ciclo LVGL para mantener PR y
+    // permitir arrastrar sliders correctamente.
+
+    if (
+
+        !touchInterrupt &&
+        !pointerPressed
+
+    )
+
     {
+
         data->state =
             LV_INDEV_STATE_REL;
 
+        data->point.x =
+            lastX;
+
+        data->point.y =
+            lastY;
+
         return;
+
     }
 
 
-    touchInterrupt = false;
+    touchInterrupt =
+        false;
 
 
     const uint8_t touched =
+
         touch.getPoint(
+
             touchX,
+
             touchY,
+
             touch.getSupportTouchPoint()
+
         );
 
 
     if (touched > 0)
+
     {
-        data->state =
-            LV_INDEV_STATE_PR;
 
-
-        data->point.x =
+        int16_t x =
             touchX[0];
 
-        data->point.y =
+        int16_t y =
             touchY[0];
 
 
-        Serial.print(
-            "[AsterTouch] x="
-        );
+        if (x < 0)
+        {
+            x = 0;
+        }
+        else if (x >= TOUCH_WIDTH)
+        {
+            x = TOUCH_WIDTH - 1;
+        }
 
-        Serial.print(
-            touchX[0]
-        );
 
-        Serial.print(
-            " y="
-        );
+        if (y < 0)
+        {
+            y = 0;
+        }
+        else if (y >= TOUCH_HEIGHT)
+        {
+            y = TOUCH_HEIGHT - 1;
+        }
 
-        Serial.println(
-            touchY[0]
-        );
+
+        const bool firstPress =
+            !pointerPressed;
+
+
+        pointerPressed =
+            true;
+
+        lastX =
+            x;
+
+        lastY =
+            y;
+
+
+        data->state =
+            LV_INDEV_STATE_PR;
+
+        data->point.x =
+            lastX;
+
+        data->point.y =
+            lastY;
+
+
+        // Registro suficiente para comprobar calibración,
+        // sin inundar Serial durante un arrastre.
+
+        if (
+
+            firstPress ||
+
+            abs(
+                lastX -
+                lastLoggedX
+            ) >= 5 ||
+
+            abs(
+                lastY -
+                lastLoggedY
+            ) >= 5
+
+        )
+
+        {
+
+            Serial.print(
+                "[AsterTouch] x="
+            );
+
+            Serial.print(
+                lastX
+            );
+
+            Serial.print(
+                " y="
+            );
+
+            Serial.println(
+                lastY
+            );
+
+
+            lastLoggedX =
+                lastX;
+
+            lastLoggedY =
+                lastY;
+
+        }
+
     }
+
     else
+
     {
+
+        pointerPressed =
+            false;
+
         data->state =
             LV_INDEV_STATE_REL;
+
+        data->point.x =
+            lastX;
+
+        data->point.y =
+            lastY;
+
     }
+
 }
 
 

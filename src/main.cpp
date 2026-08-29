@@ -320,6 +320,17 @@ void setup()
         Serial.println(
             "[Pocket] Altavoz preparado."
         );
+
+        AsterDisplay.setVolumeLevel(
+            AsterAudio.speakerVolume()
+        );
+
+        Serial.printf(
+            "[Pocket] Volumen inicial: %u%%\n",
+            static_cast<unsigned>(
+                AsterAudio.speakerVolume()
+            )
+        );
     }
 
 
@@ -430,6 +441,44 @@ void setup()
 void loop()
 {
     AsterDisplay.update();
+
+    // -----------------------------------------------------
+    // Volumen táctil
+    // -----------------------------------------------------
+
+    uint8_t requestedVolume = 0;
+
+    if (
+        AsterDisplay.consumeVolumeChange(
+            requestedVolume
+        )
+    )
+    {
+        if (
+            AsterAudio.setSpeakerVolume(
+                requestedVolume
+            )
+        )
+        {
+            AsterDisplay.setVolumeLevel(
+                AsterAudio.speakerVolume()
+            );
+
+            Serial.printf(
+                "[Pocket] Volumen aplicado: %u%%\n",
+                static_cast<unsigned>(
+                    AsterAudio.speakerVolume()
+                )
+            );
+        }
+        else
+        {
+            Serial.println(
+                "[Pocket] ERROR aplicando volumen."
+            );
+        }
+    }
+
 
 
     // -----------------------------------------------------

@@ -54,6 +54,29 @@ static String pendingMessage;
 static bool sendRequested =
     false;
 
+static lv_obj_t *volumeSlider =
+    nullptr;
+
+static lv_obj_t *volumeValueLabel =
+    nullptr;
+
+static uint8_t currentVolume =
+    80;
+
+static uint8_t pendingVolume =
+    80;
+
+static bool volumeChangeRequested =
+    false;
+
+static bool volumeScreenRequested =
+    false;
+
+static bool chatScreenRequested =
+    false;
+
+
+
 
 // ---------------------------------------------------------
 // AMOLED
@@ -186,6 +209,12 @@ static lv_obj_t *prepareScreen()
     );
 
 
+    volumeSlider =
+        nullptr;
+
+    volumeValueLabel =
+        nullptr;
+
     return screen;
 }
 
@@ -315,6 +344,264 @@ static void newQuestionEvent(
 // ---------------------------------------------------------
 // Inicialización AMOLED + LVGL
 // ---------------------------------------------------------
+
+
+// ---------------------------------------------------------
+// Volumen provisional
+// ---------------------------------------------------------
+
+static void volumeButtonEvent(
+
+    lv_event_t *event
+
+)
+
+{
+
+    if (
+
+        lv_event_get_code(event) !=
+        LV_EVENT_CLICKED
+
+    )
+
+    {
+
+        return;
+
+    }
+
+
+    volumeScreenRequested =
+        true;
+
+}
+
+
+static void volumeSliderEvent(
+
+    lv_event_t *event
+
+)
+
+{
+
+    if (
+
+        lv_event_get_code(event) !=
+        LV_EVENT_VALUE_CHANGED
+
+    )
+
+    {
+
+        return;
+
+    }
+
+    lv_obj_t *slider =
+        lv_event_get_target(event);
+
+    const int32_t value =
+        lv_slider_get_value(slider);
+
+    currentVolume =
+        static_cast<uint8_t>(
+            value
+        );
+
+    pendingVolume =
+        currentVolume;
+
+    volumeChangeRequested =
+        true;
+
+    if (volumeValueLabel != nullptr)
+
+    {
+
+        char buffer[16];
+
+        snprintf(
+
+            buffer,
+
+            sizeof(buffer),
+
+            "%u %%",
+
+            static_cast<unsigned>(
+                currentVolume
+            )
+
+        );
+
+        lv_label_set_text(
+
+            volumeValueLabel,
+
+            buffer
+
+        );
+
+    }
+
+    Serial.printf(
+
+        "[AsterDisplay] Volumen solicitado: %u%%\n",
+
+        static_cast<unsigned>(
+            currentVolume
+        )
+
+    );
+
+}
+
+
+static void volumeMinusEvent(
+
+    lv_event_t *event
+
+)
+
+{
+
+    if (
+
+        lv_event_get_code(event) !=
+        LV_EVENT_CLICKED ||
+
+        volumeSlider == nullptr
+
+    )
+
+    {
+
+        return;
+
+    }
+
+    int32_t value =
+        lv_slider_get_value(
+            volumeSlider
+        );
+
+    value -= 5;
+
+    if (value < 0)
+    {
+        value = 0;
+    }
+
+    lv_slider_set_value(
+
+        volumeSlider,
+
+        value,
+
+        LV_ANIM_ON
+
+    );
+
+    lv_event_send(
+
+        volumeSlider,
+
+        LV_EVENT_VALUE_CHANGED,
+
+        nullptr
+
+    );
+
+}
+
+
+static void volumePlusEvent(
+
+    lv_event_t *event
+
+)
+
+{
+
+    if (
+
+        lv_event_get_code(event) !=
+        LV_EVENT_CLICKED ||
+
+        volumeSlider == nullptr
+
+    )
+
+    {
+
+        return;
+
+    }
+
+    int32_t value =
+        lv_slider_get_value(
+            volumeSlider
+        );
+
+    value += 5;
+
+    if (value > 100)
+    {
+        value = 100;
+    }
+
+    lv_slider_set_value(
+
+        volumeSlider,
+
+        value,
+
+        LV_ANIM_ON
+
+    );
+
+    lv_event_send(
+
+        volumeSlider,
+
+        LV_EVENT_VALUE_CHANGED,
+
+        nullptr
+
+    );
+
+}
+
+
+static void volumeBackEvent(
+
+    lv_event_t *event
+
+)
+
+{
+
+    if (
+
+        lv_event_get_code(event) !=
+        LV_EVENT_CLICKED
+
+    )
+
+    {
+
+        return;
+
+    }
+
+
+    chatScreenRequested =
+        true;
+
+}
+
 
 void AsterDisplayClass::begin()
 {
@@ -592,6 +879,58 @@ void AsterDisplayClass::showChatInput()
     // Campo de texto
     // -----------------------------------------------------
 
+    lv_obj_t *volumeButton =
+        lv_btn_create(
+            screen
+        );
+
+    lv_obj_set_size(
+        volumeButton,
+        72,
+        40
+    );
+
+    lv_obj_align(
+        volumeButton,
+        LV_ALIGN_TOP_MID,
+        -120,
+        167
+    );
+
+    lv_obj_set_style_radius(
+        volumeButton,
+        18,
+        0
+    );
+
+    lv_obj_add_event_cb(
+        volumeButton,
+        volumeButtonEvent,
+        LV_EVENT_CLICKED,
+        nullptr
+    );
+
+    lv_obj_t *volumeLabel =
+        lv_label_create(
+            volumeButton
+        );
+
+    lv_label_set_text(
+        volumeLabel,
+        "VOL"
+    );
+
+    lv_obj_set_style_text_font(
+        volumeLabel,
+        &aster_montserrat_24,
+        0
+    );
+
+    lv_obj_center(
+        volumeLabel
+    );
+
+
     messageInput =
         lv_textarea_create(
             screen
@@ -753,6 +1092,367 @@ void AsterDisplayClass::showChatInput()
 // ---------------------------------------------------------
 // Mostrar respuesta de Asty
 // ---------------------------------------------------------
+
+
+// ---------------------------------------------------------
+// Control provisional de volumen
+// ---------------------------------------------------------
+
+void AsterDisplayClass::showVolumeControl()
+
+{
+
+    lv_obj_t *screen =
+        prepareScreen();
+
+
+    lv_obj_t *title =
+        lv_label_create(
+            screen
+        );
+
+    lv_label_set_text(
+        title,
+        "VOLUMEN"
+    );
+
+    lv_obj_set_style_text_color(
+        title,
+        lv_color_white(),
+        0
+    );
+
+    lv_obj_set_style_text_font(
+        title,
+        &lv_font_montserrat_36,
+        0
+    );
+
+    lv_obj_align(
+        title,
+        LV_ALIGN_TOP_MID,
+        0,
+        55
+    );
+
+
+    volumeValueLabel =
+        lv_label_create(
+            screen
+        );
+
+    char valueText[16];
+
+    snprintf(
+
+        valueText,
+
+        sizeof(valueText),
+
+        "%u %%",
+
+        static_cast<unsigned>(
+            currentVolume
+        )
+
+    );
+
+    lv_label_set_text(
+        volumeValueLabel,
+        valueText
+    );
+
+    lv_obj_set_style_text_color(
+        volumeValueLabel,
+        lv_color_white(),
+        0
+    );
+
+    lv_obj_set_style_text_font(
+        volumeValueLabel,
+        &lv_font_montserrat_36,
+        0
+    );
+
+    lv_obj_align(
+        volumeValueLabel,
+        LV_ALIGN_CENTER,
+        0,
+        -55
+    );
+
+
+    volumeSlider =
+        lv_slider_create(
+            screen
+        );
+
+    lv_obj_set_size(
+        volumeSlider,
+        300,
+        24
+    );
+
+    lv_slider_set_range(
+        volumeSlider,
+        0,
+        100
+    );
+
+    lv_slider_set_value(
+        volumeSlider,
+        currentVolume,
+        LV_ANIM_OFF
+    );
+
+    lv_obj_align(
+        volumeSlider,
+        LV_ALIGN_CENTER,
+        0,
+        15
+    );
+
+    lv_obj_add_event_cb(
+        volumeSlider,
+        volumeSliderEvent,
+        LV_EVENT_VALUE_CHANGED,
+        nullptr
+    );
+
+
+    lv_obj_t *minusButton =
+        lv_btn_create(
+            screen
+        );
+
+    lv_obj_set_size(
+        minusButton,
+        85,
+        58
+    );
+
+    lv_obj_align(
+        minusButton,
+        LV_ALIGN_CENTER,
+        -95,
+        90
+    );
+
+    lv_obj_add_event_cb(
+        minusButton,
+        volumeMinusEvent,
+        LV_EVENT_CLICKED,
+        nullptr
+    );
+
+    lv_obj_t *minusLabel =
+        lv_label_create(
+            minusButton
+        );
+
+    lv_label_set_text(
+        minusLabel,
+        "-"
+    );
+
+    lv_obj_set_style_text_font(
+        minusLabel,
+        &lv_font_montserrat_36,
+        0
+    );
+
+    lv_obj_center(
+        minusLabel
+    );
+
+
+    lv_obj_t *plusButton =
+        lv_btn_create(
+            screen
+        );
+
+    lv_obj_set_size(
+        plusButton,
+        85,
+        58
+    );
+
+    lv_obj_align(
+        plusButton,
+        LV_ALIGN_CENTER,
+        95,
+        90
+    );
+
+    lv_obj_add_event_cb(
+        plusButton,
+        volumePlusEvent,
+        LV_EVENT_CLICKED,
+        nullptr
+    );
+
+    lv_obj_t *plusLabel =
+        lv_label_create(
+            plusButton
+        );
+
+    lv_label_set_text(
+        plusLabel,
+        "+"
+    );
+
+    lv_obj_set_style_text_font(
+        plusLabel,
+        &lv_font_montserrat_36,
+        0
+    );
+
+    lv_obj_center(
+        plusLabel
+    );
+
+
+    lv_obj_t *backButton =
+        lv_btn_create(
+            screen
+        );
+
+    lv_obj_set_size(
+        backButton,
+        180,
+        52
+    );
+
+    lv_obj_align(
+        backButton,
+        LV_ALIGN_BOTTOM_MID,
+        0,
+        -35
+    );
+
+    lv_obj_add_event_cb(
+        backButton,
+        volumeBackEvent,
+        LV_EVENT_CLICKED,
+        nullptr
+    );
+
+    lv_obj_t *backLabel =
+        lv_label_create(
+            backButton
+        );
+
+    lv_label_set_text(
+        backLabel,
+        "VOLVER"
+    );
+
+    lv_obj_set_style_text_font(
+        backLabel,
+        &aster_montserrat_24,
+        0
+    );
+
+    lv_obj_center(
+        backLabel
+    );
+
+    Serial.printf(
+
+        "[AsterDisplay] Control de volumen: %u%%\n",
+
+        static_cast<unsigned>(
+            currentVolume
+        )
+
+    );
+
+    lv_timer_handler();
+
+}
+
+
+void AsterDisplayClass::setVolumeLevel(
+
+    uint8_t volume
+
+)
+
+{
+
+    if (volume > 100)
+    {
+        volume = 100;
+    }
+
+    currentVolume =
+        volume;
+
+    if (volumeSlider != nullptr)
+
+    {
+
+        lv_slider_set_value(
+            volumeSlider,
+            currentVolume,
+            LV_ANIM_OFF
+        );
+
+    }
+
+    if (volumeValueLabel != nullptr)
+
+    {
+
+        char buffer[16];
+
+        snprintf(
+
+            buffer,
+
+            sizeof(buffer),
+
+            "%u %%",
+
+            static_cast<unsigned>(
+                currentVolume
+            )
+
+        );
+
+        lv_label_set_text(
+            volumeValueLabel,
+            buffer
+        );
+
+    }
+
+}
+
+
+bool AsterDisplayClass::consumeVolumeChange(
+
+    uint8_t &volume
+
+)
+
+{
+
+    if (!volumeChangeRequested)
+    {
+        return false;
+    }
+
+    volume =
+        pendingVolume;
+
+    volumeChangeRequested =
+        false;
+
+    return true;
+
+}
+
 
 void AsterDisplayClass::showReply(
     const char *reply
@@ -1001,8 +1701,47 @@ bool AsterDisplayClass::consumeSendRequest(
 // ---------------------------------------------------------
 
 void AsterDisplayClass::update()
+
 {
+
     lv_timer_handler();
+
+
+    if (volumeScreenRequested)
+
+    {
+
+        volumeScreenRequested =
+            false;
+
+        chatScreenRequested =
+            false;
+
+
+        showVolumeControl();
+
+        return;
+
+    }
+
+
+    if (chatScreenRequested)
+
+    {
+
+        chatScreenRequested =
+            false;
+
+        volumeScreenRequested =
+            false;
+
+
+        showChatInput();
+
+        return;
+
+    }
+
 }
 
 

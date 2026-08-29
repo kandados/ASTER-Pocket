@@ -27,8 +27,6 @@ namespace
     constexpr gpio_num_t PIN_SPEAKER_PA = GPIO_NUM_46;
 
     constexpr i2s_port_t I2S_PORT = I2S_NUM_0;
-
-    constexpr int SPEAKER_VOLUME = 60;
     constexpr int16_t TEST_TONE_AMPLITUDE = 6000;
 
     constexpr size_t AUDIO_FRAME_COUNT = 128;
@@ -823,7 +821,7 @@ bool AsterAudioClass::beginSpeaker()
     result =
         es8311_voice_volume_set(
             codec,
-            SPEAKER_VOLUME,
+            static_cast<int>(_speakerVolume),
             nullptr
         );
 
@@ -1870,6 +1868,126 @@ bool AsterAudioClass::playTestTone(
     );
 
     return true;
+}
+
+
+
+bool AsterAudioClass::setSpeakerVolume(
+
+    uint8_t volume
+
+)
+
+{
+
+    if (volume > 100)
+
+    {
+
+        volume = 100;
+
+    }
+
+
+    _speakerVolume =
+
+        volume;
+
+
+    // El valor puede configurarse incluso antes de
+    // inicializar el ES8311. Se aplicará en beginSpeaker().
+
+    if (
+
+        !_speakerReady ||
+
+        _speakerCodec == nullptr
+
+    )
+
+    {
+
+        Serial.printf(
+
+            "[AsterAudio] Volumen preparado: %u%%\n",
+
+            static_cast<unsigned>(
+
+                _speakerVolume
+
+            )
+
+        );
+
+
+        return true;
+
+    }
+
+
+    const esp_err_t result =
+
+        es8311_voice_volume_set(
+
+            reinterpret_cast<es8311_handle_t>(
+
+                _speakerCodec
+
+            ),
+
+            static_cast<int>(
+
+                _speakerVolume
+
+            ),
+
+            nullptr
+
+        );
+
+
+    if (result != ESP_OK)
+
+    {
+
+        Serial.printf(
+
+            "[AsterAudio] ERROR ajustando volumen ES8311: %d\n",
+
+            static_cast<int>(result)
+
+        );
+
+
+        return false;
+
+    }
+
+
+    Serial.printf(
+
+        "[AsterAudio] Volumen del altavoz: %u%%\n",
+
+        static_cast<unsigned>(
+
+            _speakerVolume
+
+        )
+
+    );
+
+
+    return true;
+
+}
+
+
+uint8_t AsterAudioClass::speakerVolume() const
+
+{
+
+    return _speakerVolume;
+
 }
 
 

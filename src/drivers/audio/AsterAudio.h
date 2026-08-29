@@ -66,6 +66,12 @@ public:
     bool isMicrophoneReady() const;
     bool isSpeakerReady() const;
 
+    bool setSpeakerVolume(
+        uint8_t volume
+    );
+
+    uint8_t speakerVolume() const;
+
 private:
     void *_txChannel = nullptr;
     void *_rxChannel = nullptr;
@@ -75,6 +81,8 @@ private:
 
     bool _microphoneReady = false;
     bool _speakerReady = false;
+
+    uint8_t _speakerVolume = 80;
 };
 
 extern AsterAudioClass AsterAudio;
