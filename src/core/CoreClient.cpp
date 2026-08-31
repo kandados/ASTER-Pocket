@@ -1038,13 +1038,17 @@ public:
 
         CoreSpeechPcmCallback callback,
 
-        void *context
+        void *context,
+
+        uint32_t requestStartedAt
 
     )
 
         : _callback(callback),
 
-          _context(context)
+          _context(context),
+
+          _requestStartedAt(requestStartedAt)
 
     {
 
@@ -1093,6 +1097,29 @@ public:
         {
 
             return 0;
+
+        }
+
+
+        if (!_firstPcmLogged)
+
+        {
+
+            _firstPcmLogged = true;
+
+
+            Serial.printf(
+
+                "[CoreClient] Primer PCM TTS tras %lu ms\n",
+
+                static_cast<unsigned long>(
+
+                    millis() -
+                    _requestStartedAt
+
+                )
+
+            );
 
         }
 
@@ -1371,6 +1398,10 @@ private:
 
     size_t _bytesReceived = 0;
 
+    uint32_t _requestStartedAt = 0;
+
+    bool _firstPcmLogged = false;
+
 };
 
 }
@@ -1417,6 +1448,10 @@ bool CoreClientClass::streamSpeech(
     }
 
 
+    const uint32_t speechRequestStartedAt =
+        millis();
+
+
     WiFiClientSecure tlsClient;
 
     HTTPClient http;
@@ -1434,7 +1469,7 @@ bool CoreClientClass::streamSpeech(
 
         messageId +
 
-        "/speech";
+        "/speech/stream";
 
 
     Serial.println();
@@ -1550,7 +1585,9 @@ bool CoreClientClass::streamSpeech(
 
         callback,
 
-        context
+        context,
+
+        speechRequestStartedAt
 
     );
 
