@@ -30,9 +30,19 @@ public:
         const char *reply
     );
 
+    void beginReplyStream();
+
+    void appendReplyStream(
+        const char *text
+    );
+
+    void endReplyStream();
+
     bool consumeSendRequest(
         String &message
     );
+
+    void serviceUi();
 
     void update();
 };

@@ -1028,6 +1028,421 @@ bool CoreClientClass::sendAudio(
 namespace
 {
 
+class CoreAudioNdjsonSink final : public Stream
+{
+public:
+    CoreAudioNdjsonSink(
+        CoreAudioTurnResult &result,
+        CoreAudioStreamCallback callback,
+        void *context,
+        uint32_t requestStartedAt
+    )
+        : _result(result),
+          _callback(callback),
+          _context(context),
+          _requestStartedAt(requestStartedAt)
+    {
+        _line.reserve(512);
+    }
+
+
+    size_t write(
+        uint8_t value
+    ) override
+    {
+        return write(
+            &value,
+            1
+        );
+    }
+
+
+    size_t write(
+        const uint8_t *buffer,
+        size_t size
+    ) override
+    {
+        if (
+            buffer == nullptr ||
+            size == 0
+        )
+        {
+            return 0;
+        }
+
+        for (
+            size_t index = 0;
+            index < size;
+            ++index
+        )
+        {
+            const char value =
+                static_cast<char>(
+                    buffer[index]
+                );
+
+            if (value == '\r')
+            {
+                continue;
+            }
+
+            if (value == '\n')
+            {
+                processLine();
+                _line = "";
+                continue;
+            }
+
+            _line += value;
+
+            if (_line.length() > 8192)
+            {
+                Serial.println(
+                    "[CoreClient] ERROR: línea NDJSON demasiado grande."
+                );
+
+                _parseFailed = true;
+                _line = "";
+            }
+        }
+
+        _bytesReceived += size;
+
+        return size;
+    }
+
+
+    int available() override
+    {
+        return 0;
+    }
+
+
+    int read() override
+    {
+        return -1;
+    }
+
+
+    int peek() override
+    {
+        return -1;
+    }
+
+
+    void flush() override
+    {
+    }
+
+
+    bool finish()
+    {
+        if (_line.length() > 0)
+        {
+            processLine();
+            _line = "";
+        }
+
+        if (!_sawDone)
+        {
+            Serial.println(
+                "[CoreClient] ERROR: stream terminó sin evento done."
+            );
+        }
+
+        if (_result.transcription.length() == 0)
+        {
+            Serial.println(
+                "[CoreClient] ERROR: stream sin transcription."
+            );
+        }
+
+        if (_result.answer.length() == 0)
+        {
+            Serial.println(
+                "[CoreClient] ERROR: stream sin respuesta de Asty."
+            );
+        }
+
+        return (
+            !_parseFailed &&
+            !_callbackFailed &&
+            !_serverError &&
+            _sawDone &&
+            _result.transcription.length() > 0 &&
+            _result.answer.length() > 0
+        );
+    }
+
+
+    size_t bytesReceived() const
+    {
+        return _bytesReceived;
+    }
+
+
+private:
+    void emit(
+        CoreAudioStreamEventType eventType,
+        const String &content
+    )
+    {
+        if (_callback == nullptr)
+        {
+            return;
+        }
+
+        if (
+            !_callback(
+                eventType,
+                content,
+                _context
+            )
+        )
+        {
+            _callbackFailed = true;
+        }
+    }
+
+
+    void processLine()
+    {
+        if (_line.length() == 0)
+        {
+            return;
+        }
+
+        if (_result.rawResponse.length() < 4096)
+        {
+            _result.rawResponse += _line;
+            _result.rawResponse += '\n';
+        }
+
+        JsonDocument document;
+
+        const DeserializationError error =
+            deserializeJson(
+                document,
+                _line
+            );
+
+        if (error)
+        {
+            Serial.print(
+                "[CoreClient] ERROR NDJSON: "
+            );
+            Serial.println(
+                error.c_str()
+            );
+
+            _parseFailed = true;
+            return;
+        }
+
+        const char *type =
+            document["type"];
+
+        if (type == nullptr)
+        {
+            Serial.println(
+                "[CoreClient] ERROR: evento NDJSON sin type."
+            );
+
+            _parseFailed = true;
+            return;
+        }
+
+        const String eventType =
+            String(type);
+
+        const char *contentValue =
+            document["content"];
+
+        const String content =
+            (
+                contentValue != nullptr
+                ? String(contentValue)
+                : String()
+            );
+
+        if (eventType == "transcription")
+        {
+            _result.transcription = content;
+
+            Serial.printf(
+                "[CoreClient] Transcripción recibida tras %lu ms\n",
+                static_cast<unsigned long>(
+                    millis() -
+                    _requestStartedAt
+                )
+            );
+
+            emit(
+                CoreAudioStreamEventType::Transcription,
+                content
+            );
+
+            return;
+        }
+
+        if (eventType == "start")
+        {
+            const char *provider =
+                document["provider"];
+
+            const char *model =
+                document["model"];
+
+            if (provider != nullptr)
+            {
+                _result.provider =
+                    String(provider);
+            }
+
+            if (model != nullptr)
+            {
+                _result.model =
+                    String(model);
+            }
+
+            emit(
+                CoreAudioStreamEventType::Start,
+                String()
+            );
+
+            return;
+        }
+
+        if (eventType == "delta")
+        {
+            if (content.length() > 0)
+            {
+                _result.answer += content;
+            }
+
+            if (!_firstDeltaLogged)
+            {
+                _firstDeltaLogged = true;
+
+                Serial.printf(
+                    "[CoreClient] Primer delta Asty tras %lu ms\n",
+                    static_cast<unsigned long>(
+                        millis() -
+                        _requestStartedAt
+                    )
+                );
+            }
+
+            emit(
+                CoreAudioStreamEventType::Delta,
+                content
+            );
+
+            return;
+        }
+
+        if (eventType == "error")
+        {
+            _serverError = true;
+
+            Serial.print(
+                "[CoreClient] ERROR stream Asty: "
+            );
+            Serial.println(
+                content
+            );
+
+            emit(
+                CoreAudioStreamEventType::Error,
+                content
+            );
+
+            return;
+        }
+
+        if (eventType == "done")
+        {
+            const char *assistantMessageId =
+                document["assistant_message_id"];
+
+            const char *provider =
+                document["provider"];
+
+            const char *model =
+                document["model"];
+
+            if (assistantMessageId != nullptr)
+            {
+                _result.assistantMessageId =
+                    String(
+                        assistantMessageId
+                    );
+            }
+
+            if (provider != nullptr)
+            {
+                _result.provider =
+                    String(provider);
+            }
+
+            if (model != nullptr)
+            {
+                _result.model =
+                    String(model);
+            }
+
+            _sawDone = true;
+
+            emit(
+                CoreAudioStreamEventType::Done,
+                String()
+            );
+
+            return;
+        }
+
+        Serial.print(
+            "[CoreClient] Evento NDJSON desconocido: "
+        );
+        Serial.println(
+            eventType
+        );
+    }
+
+
+    CoreAudioTurnResult &_result;
+
+    CoreAudioStreamCallback _callback =
+        nullptr;
+
+    void *_context =
+        nullptr;
+
+    uint32_t _requestStartedAt =
+        0;
+
+    String _line;
+
+    size_t _bytesReceived =
+        0;
+
+    bool _parseFailed =
+        false;
+
+    bool _callbackFailed =
+        false;
+
+    bool _serverError =
+        false;
+
+    bool _sawDone =
+        false;
+
+    bool _firstDeltaLogged =
+        false;
+};
+
+
 class CoreSpeechPcmSink final : public Stream
 
 {
@@ -1410,6 +1825,283 @@ private:
 // ---------------------------------------------------------
 // Descargar TTS PCM de Asty
 // ---------------------------------------------------------
+
+// ---------------------------------------------------------
+// Enviar audio PCM y consumir respuesta NDJSON progresiva
+// ---------------------------------------------------------
+
+bool CoreClientClass::sendAudioStream(
+    const String &conversationId,
+    const uint8_t *audioData,
+    size_t audioBytes,
+    uint32_t sampleRate,
+    CoreAudioTurnResult &result,
+    CoreAudioStreamCallback callback,
+    void *context
+)
+{
+    result.transcription = "";
+    result.answer = "";
+    result.assistantMessageId = "";
+    result.provider = "";
+    result.model = "";
+    result.rawResponse = "";
+
+    if (conversationId.length() == 0)
+    {
+        Serial.println(
+            "[CoreClient] ERROR: conversación no disponible."
+        );
+
+        return false;
+    }
+
+    if (
+        audioData == nullptr ||
+        audioBytes == 0
+    )
+    {
+        Serial.println(
+            "[CoreClient] ERROR: audio vacío."
+        );
+
+        return false;
+    }
+
+    if (
+        audioBytes %
+        sizeof(int16_t) != 0
+    )
+    {
+        Serial.println(
+            "[CoreClient] ERROR: PCM no alineado a 16 bits."
+        );
+
+        return false;
+    }
+
+    if (sampleRate == 0)
+    {
+        Serial.println(
+            "[CoreClient] ERROR: sample rate inválido."
+        );
+
+        return false;
+    }
+
+    WiFiClientSecure tlsClient;
+    HTTPClient http;
+
+    const String url =
+        String(ASTER_CORE_URL) +
+        "/conversations/" +
+        conversationId +
+        "/audio/stream";
+
+    Serial.println();
+
+    Serial.print(
+        "[CoreClient] POST "
+    );
+
+    Serial.println(
+        url
+    );
+
+    Serial.println(
+        "[CoreClient] Enviando PCM a audio/stream..."
+    );
+
+    if (
+        !beginSecureRequest(
+            http,
+            tlsClient,
+            url
+        )
+    )
+    {
+        return false;
+    }
+
+    http.addHeader(
+        "Content-Type",
+        "audio/x-pcm"
+    );
+
+    http.addHeader(
+        "X-Audio-Sample-Rate",
+        String(sampleRate)
+    );
+
+    http.addHeader(
+        "X-Audio-Bits-Per-Sample",
+        "16"
+    );
+
+    http.addHeader(
+        "X-Audio-Channels",
+        "1"
+    );
+
+    http.addHeader(
+        "X-Audio-Encoding",
+        "pcm_s16le"
+    );
+
+    addAuthenticationHeader(
+        http
+    );
+
+    const uint32_t requestStartedAt =
+        millis();
+
+    const int status =
+        http.sendRequest(
+            "POST",
+            const_cast<uint8_t *>(
+                audioData
+            ),
+            audioBytes
+        );
+
+    const uint32_t headersElapsed =
+        millis() -
+        requestStartedAt;
+
+    Serial.print(
+        "[CoreClient] Audio stream HTTP: "
+    );
+
+    Serial.println(
+        status
+    );
+
+    Serial.printf(
+        "[CoreClient] Cabeceras /audio/stream tras %lu ms\n",
+        static_cast<unsigned long>(
+            headersElapsed
+        )
+    );
+
+    if (status != 200)
+    {
+        const String response =
+            http.getString();
+
+        http.end();
+
+        Serial.print(
+            "[CoreClient] ERROR response: "
+        );
+
+        Serial.println(
+            response
+        );
+
+        return false;
+    }
+
+    CoreAudioNdjsonSink sink(
+        result,
+        callback,
+        context,
+        requestStartedAt
+    );
+
+    const int streamedBytes =
+        http.writeToStream(
+            &sink
+        );
+
+    const bool streamValid =
+        sink.finish();
+
+    const uint32_t totalElapsed =
+        millis() -
+        requestStartedAt;
+
+    http.end();
+
+    Serial.printf(
+        "[CoreClient] NDJSON recibido: %lu bytes\n",
+        static_cast<unsigned long>(
+            sink.bytesReceived()
+        )
+    );
+
+    Serial.printf(
+        "[CoreClient] Tiempo total audio stream: %lu ms\n",
+        static_cast<unsigned long>(
+            totalElapsed
+        )
+    );
+
+    if (streamedBytes < 0)
+    {
+        Serial.printf(
+            "[CoreClient] ERROR leyendo stream HTTP: %d\n",
+            streamedBytes
+        );
+
+        return false;
+    }
+
+    if (!streamValid)
+    {
+        Serial.println(
+            "[CoreClient] ERROR: stream NDJSON incompleto o inválido."
+        );
+
+        return false;
+    }
+
+    Serial.println();
+
+    Serial.println(
+        "======= VOZ / STREAM ======="
+    );
+
+    Serial.print(
+        "[Pocket] TÚ: "
+    );
+
+    Serial.println(
+        result.transcription
+    );
+
+    Serial.println();
+
+    Serial.print(
+        "[Pocket] ASTY: "
+    );
+
+    Serial.println(
+        result.answer
+    );
+
+    Serial.print(
+        "[Pocket] Provider: "
+    );
+
+    Serial.println(
+        result.provider
+    );
+
+    Serial.print(
+        "[Pocket] Model: "
+    );
+
+    Serial.println(
+        result.model
+    );
+
+    Serial.println(
+        "============================="
+    );
+
+    return true;
+}
+
 
 bool CoreClientClass::streamSpeech(
 

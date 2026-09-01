@@ -75,6 +75,17 @@ static bool volumeScreenRequested =
 static bool chatScreenRequested =
     false;
 
+static lv_obj_t *replyStreamPanel =
+    nullptr;
+
+static lv_obj_t *replyStreamLabel =
+    nullptr;
+
+static String replyStreamText;
+
+static uint32_t replyStreamLastPaintAt =
+    0;
+
 
 
 
@@ -214,6 +225,18 @@ static lv_obj_t *prepareScreen()
 
     volumeValueLabel =
         nullptr;
+
+    replyStreamPanel =
+        nullptr;
+
+    replyStreamLabel =
+        nullptr;
+
+    replyStreamText =
+        "";
+
+    replyStreamLastPaintAt =
+        0;
 
     return screen;
 }
@@ -1454,6 +1477,103 @@ bool AsterDisplayClass::consumeVolumeChange(
 }
 
 
+void AsterDisplayClass::beginReplyStream()
+{
+    showReply("");
+
+    replyStreamText =
+        "";
+
+    replyStreamLastPaintAt =
+        millis();
+
+    Serial.println(
+        "[AsterDisplay] Streaming de respuesta iniciado."
+    );
+}
+
+
+void AsterDisplayClass::appendReplyStream(
+    const char *text
+)
+{
+    if (
+        text == nullptr ||
+        *text == '\0'
+    )
+    {
+        return;
+    }
+
+    replyStreamText +=
+        text;
+
+    if (replyStreamLabel == nullptr)
+    {
+        return;
+    }
+
+    const uint32_t now =
+        millis();
+
+    const String chunk =
+        String(text);
+
+    const bool naturalBoundary =
+        chunk.indexOf(' ') >= 0 ||
+        chunk.indexOf('.') >= 0 ||
+        chunk.indexOf(',') >= 0 ||
+        chunk.indexOf('?') >= 0 ||
+        chunk.indexOf('!') >= 0 ||
+        chunk.indexOf('\n') >= 0;
+
+    const bool paintDue =
+        (
+            now -
+            replyStreamLastPaintAt
+        ) >= 80;
+
+    if (
+        !naturalBoundary &&
+        !paintDue
+    )
+    {
+        return;
+    }
+
+    lv_label_set_text(
+        replyStreamLabel,
+        replyStreamText.c_str()
+    );
+
+    replyStreamLastPaintAt =
+        now;
+
+    lv_timer_handler();
+}
+
+
+void AsterDisplayClass::endReplyStream()
+{
+    if (replyStreamLabel != nullptr)
+    {
+        lv_label_set_text(
+            replyStreamLabel,
+            replyStreamText.c_str()
+        );
+
+        lv_timer_handler();
+    }
+
+    Serial.printf(
+        "[AsterDisplay] Streaming finalizado: %u caracteres.\n",
+        static_cast<unsigned>(
+            replyStreamText.length()
+        )
+    );
+}
+
+
 void AsterDisplayClass::showReply(
     const char *reply
 )
@@ -1504,10 +1624,13 @@ void AsterDisplayClass::showReply(
     // Área desplazable de respuesta
     // -----------------------------------------------------
 
-    lv_obj_t *responsePanel =
+    replyStreamPanel =
         lv_obj_create(
             screen
         );
+
+    lv_obj_t *responsePanel =
+        replyStreamPanel;
 
 
     lv_obj_set_size(
@@ -1551,11 +1674,24 @@ void AsterDisplayClass::showReply(
         LV_DIR_VER
     );
 
+    lv_obj_add_flag(
+        responsePanel,
+        LV_OBJ_FLAG_SCROLLABLE
+    );
 
-    lv_obj_t *responseLabel =
+    lv_obj_set_scrollbar_mode(
+        responsePanel,
+        LV_SCROLLBAR_MODE_AUTO
+    );
+
+
+    replyStreamLabel =
         lv_label_create(
             responsePanel
         );
+
+    lv_obj_t *responseLabel =
+        replyStreamLabel;
 
 
     lv_obj_set_width(
@@ -1693,6 +1829,12 @@ bool AsterDisplayClass::consumeSendRequest(
 
 
     return true;
+}
+
+
+void AsterDisplayClass::serviceUi()
+{
+    lv_timer_handler();
 }
 
 

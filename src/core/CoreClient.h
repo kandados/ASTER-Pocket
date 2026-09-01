@@ -14,6 +14,23 @@ struct CoreAudioTurnResult
     String rawResponse;
 };
 
+enum class CoreAudioStreamEventType : uint8_t
+{
+    Transcription,
+    Start,
+    Delta,
+    Done,
+    Error
+};
+
+
+using CoreAudioStreamCallback = bool (*)(
+    CoreAudioStreamEventType eventType,
+    const String &content,
+    void *context
+);
+
+
 using CoreSpeechPcmCallback = bool (*)(
 
     const int16_t *samples,
@@ -49,6 +66,16 @@ public:
         size_t audioBytes,
         uint32_t sampleRate,
         CoreAudioTurnResult &result
+    );
+
+    bool sendAudioStream(
+        const String &conversationId,
+        const uint8_t *audioData,
+        size_t audioBytes,
+        uint32_t sampleRate,
+        CoreAudioTurnResult &result,
+        CoreAudioStreamCallback callback,
+        void *context = nullptr
     );
 
     bool streamSpeech(

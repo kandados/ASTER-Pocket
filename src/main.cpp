@@ -559,7 +559,7 @@ void loop()
 
 
                 const bool sent =
-                    CoreClient.sendAudio(
+                    CoreClient.sendAudioStream(
                         conversationId,
                         reinterpret_cast<
                             const uint8_t *
@@ -568,7 +568,61 @@ void loop()
                         ),
                         AsterVoice.byteCount(),
                         AsterAudio.SAMPLE_RATE,
-                        voiceResult
+                        voiceResult,
+                        [](
+                            CoreAudioStreamEventType eventType,
+                            const String &content,
+                            void *context
+                        ) -> bool
+                        {
+                            (void)context;
+
+                            switch (eventType)
+                            {
+                                case CoreAudioStreamEventType::Transcription:
+                                    Serial.print(
+                                        "[Pocket] STT: "
+                                    );
+                                    Serial.println(
+                                        content
+                                    );
+                                    break;
+
+                                case CoreAudioStreamEventType::Start:
+                                    Serial.println(
+                                        "[Pocket] Asty empieza a responder..."
+                                    );
+
+                                    AsterDisplay.beginReplyStream();
+                                    break;
+
+                                case CoreAudioStreamEventType::Delta:
+                                    AsterDisplay.appendReplyStream(
+                                        content.c_str()
+                                    );
+                                    break;
+
+                                case CoreAudioStreamEventType::Done:
+                                    AsterDisplay.endReplyStream();
+
+                                    Serial.println(
+                                        "[Pocket] Streaming de Asty completado."
+                                    );
+                                    break;
+
+                                case CoreAudioStreamEventType::Error:
+                                    Serial.print(
+                                        "[Pocket] ERROR streaming Asty: "
+                                    );
+                                    Serial.println(
+                                        content
+                                    );
+                                    break;
+                            }
+
+                            return true;
+                        },
+                        nullptr
                     );
 
 
@@ -614,33 +668,6 @@ void loop()
 
                     Serial.println(
                         "================================"
-                    );
-
-
-                    String exchange;
-
-                    exchange.reserve(
-                        voiceResult.transcription.length() +
-                        voiceResult.answer.length() +
-                        32
-                    );
-
-
-                    exchange +=
-                        "TÚ\n";
-
-                    exchange +=
-                        voiceResult.transcription;
-
-                    exchange +=
-                        "\n\nASTY\n";
-
-                    exchange +=
-                        voiceResult.answer;
-
-
-                    AsterDisplay.showReply(
-                        exchange.c_str()
                     );
 
 
