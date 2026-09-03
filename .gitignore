@@ -2,3 +2,7 @@
 .vscode/
 .DS_Store
 include/secrets.h
+/include/local/AsterOTASecret.h
+
+# Secretos locales de A.S.T.E.R. Pocket
+include/local/

@@ -6,6 +6,7 @@
 #include <freertos/task.h>
 #include <Arduino.h>
 #include <WiFi.h>
+#include "services/ota/AsterOTA.h"
 #include <time.h>
 #include <esp_heap_caps.h>
 #include <esp32-hal-psram.h>
@@ -996,6 +997,7 @@ static void waitVoicePlayback(
 
 void setup()
 {
+
     Serial.begin(
         115200
     );
@@ -1126,6 +1128,18 @@ void setup()
 
 
     // -----------------------------------------------------
+    // OTA local
+    // -----------------------------------------------------
+
+    if (!AsterOTA.begin())
+    {
+        Serial.println(
+            "[Pocket] AVISO: OTA local no disponible."
+        );
+    }
+
+
+    // -----------------------------------------------------
     // Hora TLS
     // -----------------------------------------------------
 
@@ -1206,6 +1220,8 @@ void setup()
 
 void loop()
 {
+    AsterOTA.handle();
+
     AsterDisplay.update();
 
     // -----------------------------------------------------
