@@ -422,6 +422,14 @@ struct VoiceStreamPlaybackState
     volatile bool audioEnded = false;
     volatile bool playbackFinished = false;
     volatile bool textFinished = false;
+
+    // El LLM puede generar el texto por delante de la voz.
+    // Lo conservamos aquí y solo lo mostramos según avanza PCM.
+    String bufferedText;
+    size_t displayedTextBytes = 0;
+    float textRevealCredit = 0.0f;
+    size_t lastDecodedBytes = 0;
+    bool textRevealStarted = false;
 };
 
 
@@ -669,6 +677,9 @@ static bool queueMultiplexedPcm(
         return false;
     }
 
+    state.lastDecodedBytes =
+        decodedBytes;
+
     size_t offset =
         0;
 
@@ -723,6 +734,227 @@ static bool queueMultiplexedPcm(
     }
 
     return true;
+}
+
+
+
+// =========================================================
+// Texto acompasado con la reproducción de voz
+// =========================================================
+
+// Aproximación inicial para castellano hablado.
+// El flujo PCM real actúa como reloj, no el LLM.
+static constexpr float ASTY_TEXT_CHARS_PER_SECOND =
+    15.0f;
+
+
+static bool isTextSpacing(
+    char value
+)
+{
+    return (
+        value == ' ' ||
+        value == '\n' ||
+        value == '\t'
+    );
+}
+
+
+static size_t nextTextUnitEnd(
+    const String &text,
+    size_t start
+)
+{
+    const size_t length =
+        text.length();
+
+    if (start >= length)
+    {
+        return length;
+    }
+
+    size_t end =
+        start;
+
+    // Llegar hasta el final de la palabra.
+    while (
+        end < length &&
+        !isTextSpacing(
+            text[end]
+        )
+    )
+    {
+        ++end;
+    }
+
+    // Incluir los espacios posteriores para conservar formato.
+    while (
+        end < length &&
+        isTextSpacing(
+            text[end]
+        )
+    )
+    {
+        ++end;
+    }
+
+    return end;
+}
+
+
+static void revealTextForPcm(
+    VoiceStreamPlaybackState &state,
+    size_t pcmBytes
+)
+{
+    if (
+        pcmBytes == 0 ||
+        state.bufferedText.length() == 0
+    )
+    {
+        return;
+    }
+
+    constexpr float PCM_BYTES_PER_SECOND =
+        static_cast<float>(
+            AsterAudioClass::SAMPLE_RATE *
+            sizeof(int16_t)
+        );
+
+    state.textRevealCredit +=
+        (
+            static_cast<float>(
+                pcmBytes
+            ) /
+            PCM_BYTES_PER_SECOND
+        ) *
+        ASTY_TEXT_CHARS_PER_SECOND;
+
+    // La primera palabra aparece prácticamente al comenzar
+    // a sonar Asty.
+    const bool firstReveal =
+        !state.textRevealStarted;
+
+    if (
+        firstReveal &&
+        state.textRevealCredit >= 1.0f
+    )
+    {
+        const size_t end =
+            nextTextUnitEnd(
+                state.bufferedText,
+                state.displayedTextBytes
+            );
+
+        if (
+            end >
+            state.displayedTextBytes
+        )
+        {
+            const String piece =
+                state.bufferedText.substring(
+                    state.displayedTextBytes,
+                    end
+                );
+
+            AsterDisplay.appendReplyStream(
+                piece.c_str()
+            );
+
+            state.displayedTextBytes =
+                end;
+
+            state.textRevealCredit =
+                0.0f;
+
+            state.textRevealStarted =
+                true;
+
+            Serial.println(
+                "[Pocket] Texto sincronizado iniciado con PCM."
+            );
+        }
+    }
+
+    // Después avanzamos palabra a palabra según la duración
+    // de audio realmente recibida.
+    while (
+        state.displayedTextBytes <
+        state.bufferedText.length()
+    )
+    {
+        const size_t end =
+            nextTextUnitEnd(
+                state.bufferedText,
+                state.displayedTextBytes
+            );
+
+        if (
+            end <=
+            state.displayedTextBytes
+        )
+        {
+            break;
+        }
+
+        const size_t unitBytes =
+            end -
+            state.displayedTextBytes;
+
+        if (
+            state.textRevealCredit <
+            static_cast<float>(
+                unitBytes
+            )
+        )
+        {
+            break;
+        }
+
+        const String piece =
+            state.bufferedText.substring(
+                state.displayedTextBytes,
+                end
+            );
+
+        AsterDisplay.appendReplyStream(
+            piece.c_str()
+        );
+
+        state.displayedTextBytes =
+            end;
+
+        state.textRevealCredit -=
+            static_cast<float>(
+                unitBytes
+            );
+    }
+}
+
+
+static void finishSynchronizedText(
+    VoiceStreamPlaybackState &state
+)
+{
+    if (
+        state.displayedTextBytes <
+        state.bufferedText.length()
+    )
+    {
+        const String remaining =
+            state.bufferedText.substring(
+                state.displayedTextBytes
+            );
+
+        AsterDisplay.appendReplyStream(
+            remaining.c_str()
+        );
+
+        state.displayedTextBytes =
+            state.bufferedText.length();
+    }
+
+    AsterDisplay.endReplyStream();
 }
 
 
@@ -1145,22 +1377,20 @@ void loop()
 
                                     AsterDisplay.beginReplyStream();
                                     break;
-
                                 case CoreAudioStreamEventType::Delta:
-                                    AsterDisplay.appendReplyStream(
-                                        content.c_str()
-                                    );
+                                    playback->bufferedText +=
+                                        content;
                                     break;
-
                                 case CoreAudioStreamEventType::TextDone:
-                                    playback->textFinished = true;
-
-                                    AsterDisplay.endReplyStream();
+                                    playback->textFinished =
+                                        true;
 
                                     Serial.println(
-                                        "[Pocket] Texto de Asty completado."
+                                        "[Pocket] Texto generado; "
+                                        "presentación acompasada continúa."
                                     );
                                     break;
+
 
                                 case CoreAudioStreamEventType::AudioStart:
                                     Serial.println(
@@ -1170,12 +1400,21 @@ void loop()
                                 case CoreAudioStreamEventType::AudioPcm:
                                     if (!playback->audioFailed)
                                     {
-                                        queueMultiplexedPcm(
-                                            content,
-                                            *playback
-                                        );
+                                        if (
+                                            queueMultiplexedPcm(
+                                                content,
+                                                *playback
+                                            )
+                                        )
+                                        {
+                                            revealTextForPcm(
+                                                *playback,
+                                                playback->lastDecodedBytes
+                                            );
+                                        }
                                     }
                                     break;
+
                                 case CoreAudioStreamEventType::AudioEnd:
                                     finishVoicePlaybackInput(
                                         *playback
@@ -1201,15 +1440,11 @@ void loop()
                                     );
                                     break;
                                 case CoreAudioStreamEventType::Done:
-                                    if (!playback->textFinished)
-                                    {
-                                        AsterDisplay.endReplyStream();
-                                    }
-
                                     Serial.println(
-                                        "[Pocket] Stream texto+voz finalizado."
+                                        "[Pocket] Stream de Core completado."
                                     );
                                     break;
+
 
 
                                 case CoreAudioStreamEventType::Error:
@@ -1240,6 +1475,10 @@ void loop()
                         voicePlayback
                     );
                 }
+
+                finishSynchronizedText(
+                    voicePlayback
+                );
 
                 if (!sent)
                 {
