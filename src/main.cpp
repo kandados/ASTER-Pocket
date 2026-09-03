@@ -1279,20 +1279,14 @@ void loop()
             );
 
             Serial.println(
-                "[AsterVoice] Empieza a hablar en 2 segundos..."
-            );
-
-            delay(
-                2000
-            );
-
-            Serial.println(
-                "[AsterVoice] HABLA AHORA."
+                "[AsterVoice] Preparando detección automática..."
             );
 
             const bool recorded =
-                AsterVoice.record(
-                    5000
+                AsterVoice.recordUntilSilence(
+                    10000,
+                    1200,
+                    3000
                 );
 
 

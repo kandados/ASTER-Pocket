@@ -15,6 +15,12 @@ class AsterVoiceClass
 public:
     bool record(uint32_t durationMs);
 
+    bool recordUntilSilence(
+        uint32_t maxDurationMs = 10000,
+        uint32_t finalSilenceMs = 900,
+        uint32_t waitForVoiceMs = 3000
+    );
+
     void clear();
 
     bool hasRecording() const;
