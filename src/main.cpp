@@ -1,3 +1,9 @@
+#include <mbedtls/base64.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/stream_buffer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <Arduino.h>
 #include <WiFi.h>
 #include <time.h>
@@ -213,6 +219,549 @@ static bool synchronizeClock()
 // Setup
 // ---------------------------------------------------------
 
+
+// =========================================================
+// TTS anticipado durante el streaming de respuesta
+// =========================================================
+
+struct VoiceEarlyTtsState
+{
+    String conversationId;
+    String pendingText;
+    String firstPhrase;
+
+    size_t spokenCharacters = 0;
+
+    volatile bool launched = false;
+    volatile bool running = false;
+    volatile bool finished = false;
+    volatile bool succeeded = false;
+};
+
+
+static size_t findFirstSpeakableSentenceEnd(
+    const String &text
+)
+{
+    if (text.length() < 12)
+    {
+        return 0;
+    }
+
+    for (size_t i = 0; i < text.length(); ++i)
+    {
+        const char c = text[i];
+
+        if (
+            c != "."[0] &&
+            c != "!"[0] &&
+            c != "?"[0]
+        )
+        {
+            continue;
+        }
+
+        if (
+            i + 1 >= text.length() ||
+            isspace(
+                static_cast<unsigned char>(
+                    text[i + 1]
+                )
+            )
+        )
+        {
+            return i + 1;
+        }
+    }
+
+    return 0;
+}
+
+
+static bool playSpeechPcm(
+    const int16_t *samples,
+    size_t sampleCount,
+    void *context
+)
+{
+    bool *speakerStarted =
+        static_cast<bool *>(context);
+
+    if (speakerStarted == nullptr)
+    {
+        return false;
+    }
+
+    if (!*speakerStarted)
+    {
+        if (!AsterAudio.startSpeakerPlayback())
+        {
+            return false;
+        }
+
+        *speakerStarted = true;
+    }
+
+    return AsterAudio.playMonoPcm(
+        samples,
+        sampleCount,
+        2000
+    );
+}
+
+
+static void earlyVoiceTtsTask(
+    void *parameter
+)
+{
+    VoiceEarlyTtsState *state =
+        static_cast<VoiceEarlyTtsState *>(
+            parameter
+        );
+
+    if (state == nullptr)
+    {
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    Serial.println(
+        "[Pocket] TTS anticipado iniciado."
+    );
+
+    bool speakerStarted = false;
+
+    const bool ok =
+        CoreClient.streamSpeechText(
+            state->conversationId,
+            state->firstPhrase,
+            playSpeechPcm,
+            &speakerStarted
+        );
+
+    if (speakerStarted)
+    {
+        AsterAudio.stopSpeakerPlayback();
+    }
+
+    state->succeeded = ok;
+    state->running = false;
+    state->finished = true;
+
+    Serial.print(
+        "[Pocket] TTS anticipado terminado: "
+    );
+
+    Serial.println(
+        ok ? "OK" : "ERROR"
+    );
+
+    vTaskDelete(nullptr);
+}
+
+
+static bool launchEarlyVoiceTts(
+    VoiceEarlyTtsState &state
+)
+{
+    if (
+        state.launched ||
+        state.firstPhrase.length() == 0
+    )
+    {
+        return false;
+    }
+
+    state.launched = true;
+    state.running = true;
+    state.finished = false;
+    state.succeeded = false;
+
+    const BaseType_t created =
+        xTaskCreate(
+            earlyVoiceTtsTask,
+            "asty-tts-early",
+            12288,
+            &state,
+            1,
+            nullptr
+        );
+
+    if (created != pdPASS)
+    {
+        state.launched = false;
+        state.running = false;
+
+        Serial.println(
+            "[Pocket] ERROR creando tarea TTS anticipada."
+        );
+
+        return false;
+    }
+
+    Serial.println(
+        "[Pocket] TTS anticipado lanzado antes de done."
+    );
+
+    return true;
+}
+
+
+
+// =========================================================
+// Voz multiplexada: texto + PCM en /audio/stream
+// =========================================================
+
+struct VoiceStreamPlaybackState
+{
+    StreamBufferHandle_t pcmBuffer = nullptr;
+    TaskHandle_t playbackTask = nullptr;
+
+    volatile bool sawAudio = false;
+    volatile bool audioFailed = false;
+    volatile bool audioEnded = false;
+    volatile bool playbackFinished = false;
+    volatile bool textFinished = false;
+};
+
+
+static constexpr size_t VOICE_PCM_BUFFER_BYTES =
+    32768;
+
+static constexpr size_t VOICE_PCM_DECODE_BYTES =
+    6144;
+
+
+static void voicePlaybackTask(
+    void *parameter
+)
+{
+    VoiceStreamPlaybackState *state =
+        static_cast<
+            VoiceStreamPlaybackState *
+        >(
+            parameter
+        );
+
+    if (
+        state == nullptr ||
+        state->pcmBuffer == nullptr
+    )
+    {
+        vTaskDelete(
+            nullptr
+        );
+
+        return;
+    }
+
+    alignas(int16_t)
+    uint8_t pcmBytes[4096];
+
+    bool speakerStarted =
+        false;
+
+    while (true)
+    {
+        const size_t received =
+            xStreamBufferReceive(
+                state->pcmBuffer,
+                pcmBytes,
+                sizeof(pcmBytes),
+                pdMS_TO_TICKS(20)
+            );
+
+        if (received > 0)
+        {
+            if (
+                received %
+                sizeof(int16_t) != 0
+            )
+            {
+                Serial.println(
+                    "[Pocket] ERROR: bloque PCM desalineado."
+                );
+
+                state->audioFailed = true;
+                break;
+            }
+
+            if (!speakerStarted)
+            {
+                if (
+                    !AsterAudio.startSpeakerPlayback()
+                )
+                {
+                    Serial.println(
+                        "[Pocket] ERROR iniciando altavoz "
+                        "desde tarea PCM."
+                    );
+
+                    state->audioFailed = true;
+                    break;
+                }
+
+                speakerStarted = true;
+
+                Serial.println(
+                    "[Pocket] Reproducción PCM independiente iniciada."
+                );
+            }
+
+            if (
+                !AsterAudio.playMonoPcm(
+                    reinterpret_cast<
+                        const int16_t *
+                    >(
+                        pcmBytes
+                    ),
+                    received /
+                    sizeof(int16_t),
+                    1000
+                )
+            )
+            {
+                Serial.println(
+                    "[Pocket] ERROR reproduciendo PCM "
+                    "desde tarea dedicada."
+                );
+
+                state->audioFailed = true;
+                break;
+            }
+        }
+
+        if (
+            state->audioEnded &&
+            xStreamBufferBytesAvailable(
+                state->pcmBuffer
+            ) == 0
+        )
+        {
+            break;
+        }
+    }
+
+    if (speakerStarted)
+    {
+        AsterAudio.stopSpeakerPlayback();
+    }
+
+    state->playbackFinished =
+        true;
+
+    state->playbackTask =
+        nullptr;
+
+    Serial.println(
+        "[Pocket] Tarea PCM finalizada."
+    );
+
+    vTaskDelete(
+        nullptr
+    );
+}
+
+
+static bool beginVoicePlayback(
+    VoiceStreamPlaybackState &state
+)
+{
+    state.pcmBuffer =
+        xStreamBufferCreate(
+            VOICE_PCM_BUFFER_BYTES,
+            1
+        );
+
+    if (state.pcmBuffer == nullptr)
+    {
+        Serial.println(
+            "[Pocket] ERROR creando buffer PCM."
+        );
+
+        state.audioFailed = true;
+        return false;
+    }
+
+    const BaseType_t created =
+        xTaskCreate(
+            voicePlaybackTask,
+            "asty-pcm",
+            8192,
+            &state,
+            3,
+            &state.playbackTask
+        );
+
+    if (created != pdPASS)
+    {
+        Serial.println(
+            "[Pocket] ERROR creando tarea PCM."
+        );
+
+        vStreamBufferDelete(
+            state.pcmBuffer
+        );
+
+        state.pcmBuffer =
+            nullptr;
+
+        state.audioFailed = true;
+
+        return false;
+    }
+
+    Serial.println(
+        "[Pocket] Buffer y tarea PCM preparados."
+    );
+
+    return true;
+}
+
+
+static bool queueMultiplexedPcm(
+    const String &encoded,
+    VoiceStreamPlaybackState &state
+)
+{
+    if (
+        state.pcmBuffer == nullptr ||
+        state.audioFailed
+    )
+    {
+        return false;
+    }
+
+    alignas(int16_t)
+    static uint8_t decoded[
+        VOICE_PCM_DECODE_BYTES
+    ];
+
+    size_t decodedBytes =
+        0;
+
+    const int decodeResult =
+        mbedtls_base64_decode(
+            decoded,
+            sizeof(decoded),
+            &decodedBytes,
+            reinterpret_cast<
+                const unsigned char *
+            >(
+                encoded.c_str()
+            ),
+            encoded.length()
+        );
+
+    if (
+        decodeResult != 0 ||
+        decodedBytes == 0 ||
+        decodedBytes %
+        sizeof(int16_t) != 0
+    )
+    {
+        Serial.printf(
+            "[Pocket] ERROR PCM Base64: %d\n",
+            decodeResult
+        );
+
+        state.audioFailed = true;
+        return false;
+    }
+
+    size_t offset =
+        0;
+
+    const uint32_t startedAt =
+        millis();
+
+    while (offset < decodedBytes)
+    {
+        const size_t sent =
+            xStreamBufferSend(
+                state.pcmBuffer,
+                decoded + offset,
+                decodedBytes - offset,
+                pdMS_TO_TICKS(20)
+            );
+
+        if (sent > 0)
+        {
+            offset += sent;
+        }
+
+        // La UI sigue viva, pero ya no alimenta directamente
+        // al I2S. La tarea de audio tiene prioridad propia.
+        AsterDisplay.update();
+
+        if (state.audioFailed)
+        {
+            return false;
+        }
+
+        if (
+            millis() -
+            startedAt > 5000
+        )
+        {
+            Serial.println(
+                "[Pocket] ERROR: timeout llenando buffer PCM."
+            );
+
+            state.audioFailed = true;
+            return false;
+        }
+    }
+
+    if (!state.sawAudio)
+    {
+        state.sawAudio = true;
+
+        Serial.println(
+            "[Pocket] Primer PCM depositado en buffer."
+        );
+    }
+
+    return true;
+}
+
+
+static void finishVoicePlaybackInput(
+    VoiceStreamPlaybackState &state
+)
+{
+    state.audioEnded =
+        true;
+}
+
+
+static void waitVoicePlayback(
+    VoiceStreamPlaybackState &state
+)
+{
+    if (state.pcmBuffer == nullptr)
+    {
+        return;
+    }
+
+    while (!state.playbackFinished)
+    {
+        AsterDisplay.update();
+
+        delay(
+            5
+        );
+    }
+
+    vStreamBufferDelete(
+        state.pcmBuffer
+    );
+
+    state.pcmBuffer =
+        nullptr;
+}
+
+
 void setup()
 {
     Serial.begin(
@@ -364,25 +913,10 @@ void setup()
     );
 
 
-    if (!CoreClient.checkHealth())
-    {
-        Serial.println(
-            "[Pocket] ERROR: Core remoto no disponible."
-        );
-
-
-        AsterDisplay.showStatus(
-            "ASTY",
-            "Core no disponible"
-        );
-
-
-        return;
-    }
-
-
+    // No hacemos un /health previo: crear la conversación
+    // ya valida directamente la disponibilidad de Core.
     Serial.println(
-        "[Pocket] Core remoto disponible."
+        "[Pocket] Conectando directamente con Core..."
     );
 
 
@@ -556,7 +1090,12 @@ void loop()
 
 
                 CoreAudioTurnResult voiceResult;
+                VoiceStreamPlaybackState voicePlayback;
 
+                const bool playbackReady =
+                    beginVoicePlayback(
+                        voicePlayback
+                    );
 
                 const bool sent =
                     CoreClient.sendAudioStream(
@@ -575,7 +1114,17 @@ void loop()
                             void *context
                         ) -> bool
                         {
-                            (void)context;
+                            VoiceStreamPlaybackState *playback =
+                                static_cast<
+                                    VoiceStreamPlaybackState *
+                                >(
+                                    context
+                                );
+
+                            if (playback == nullptr)
+                            {
+                                return false;
+                            }
 
                             switch (eventType)
                             {
@@ -583,6 +1132,7 @@ void loop()
                                     Serial.print(
                                         "[Pocket] STT: "
                                     );
+
                                     Serial.println(
                                         content
                                     );
@@ -602,18 +1152,71 @@ void loop()
                                     );
                                     break;
 
-                                case CoreAudioStreamEventType::Done:
+                                case CoreAudioStreamEventType::TextDone:
+                                    playback->textFinished = true;
+
                                     AsterDisplay.endReplyStream();
 
                                     Serial.println(
-                                        "[Pocket] Streaming de Asty completado."
+                                        "[Pocket] Texto de Asty completado."
                                     );
                                     break;
+
+                                case CoreAudioStreamEventType::AudioStart:
+                                    Serial.println(
+                                        "[Pocket] Core inicia voz multiplexada."
+                                    );
+                                    break;
+                                case CoreAudioStreamEventType::AudioPcm:
+                                    if (!playback->audioFailed)
+                                    {
+                                        queueMultiplexedPcm(
+                                            content,
+                                            *playback
+                                        );
+                                    }
+                                    break;
+                                case CoreAudioStreamEventType::AudioEnd:
+                                    finishVoicePlaybackInput(
+                                        *playback
+                                    );
+
+                                    Serial.println(
+                                        "[Pocket] Fin PCM recibido desde Core."
+                                    );
+                                    break;
+                                case CoreAudioStreamEventType::AudioError:
+                                    playback->audioFailed = true;
+
+                                    finishVoicePlaybackInput(
+                                        *playback
+                                    );
+
+                                    Serial.print(
+                                        "[Pocket] ERROR voz multiplexada: "
+                                    );
+
+                                    Serial.println(
+                                        content
+                                    );
+                                    break;
+                                case CoreAudioStreamEventType::Done:
+                                    if (!playback->textFinished)
+                                    {
+                                        AsterDisplay.endReplyStream();
+                                    }
+
+                                    Serial.println(
+                                        "[Pocket] Stream texto+voz finalizado."
+                                    );
+                                    break;
+
 
                                 case CoreAudioStreamEventType::Error:
                                     Serial.print(
                                         "[Pocket] ERROR streaming Asty: "
                                     );
+
                                     Serial.println(
                                         content
                                     );
@@ -622,12 +1225,26 @@ void loop()
 
                             return true;
                         },
-                        nullptr
+                        &voicePlayback
                     );
 
 
+
+                finishVoicePlaybackInput(
+                    voicePlayback
+                );
+
+                if (playbackReady)
+                {
+                    waitVoicePlayback(
+                        voicePlayback
+                    );
+                }
+
                 if (!sent)
                 {
+
+
                     Serial.println(
                         "[Pocket] ERROR procesando voz con Core."
                     );
@@ -670,183 +1287,28 @@ void loop()
                         "================================"
                     );
 
-
-                    // =====================================
-                    // Pocket v0.12 - TTS Asty
-                    // =====================================
-
-                    if (
-
-                        voiceResult.assistantMessageId.length() == 0
-
-                    )
-
+                    if (voicePlayback.audioFailed)
                     {
-
                         Serial.println(
-
-                            "[Pocket] AVISO: falta assistant_message.id; TTS omitido."
-
+                            "[Pocket] AVISO: hubo un error "
+                            "en la voz multiplexada."
                         );
-
                     }
-
-                    else if (
-
-                        !AsterAudio.isSpeakerReady()
-
-                    )
-
+                    else if (voicePlayback.sawAudio)
                     {
-
                         Serial.println(
-
-                            "[Pocket] AVISO: altavoz no disponible; TTS omitido."
-
+                            "[Pocket] Texto y voz recibidos "
+                            "por una sola conexión HTTPS."
                         );
-
                     }
-
                     else
-
                     {
-
-                        Serial.println();
-
                         Serial.println(
-
-                            "[Pocket] Solicitando voz de Asty..."
-
+                            "[Pocket] AVISO: Core no envió "
+                            "audio multiplexado."
                         );
-
-
-                        // El PA permanece apagado durante
-                        // la petición HTTPS. Se activa al
-                        // recibir el primer bloque PCM.
-
-                        bool speakerStartedForTts =
-
-                            false;
-
-
-                        const bool speechOk =
-
-                            CoreClient.streamSpeech(
-
-                                conversationId,
-
-                                voiceResult.assistantMessageId,
-
-                                [](
-
-                                    const int16_t *samples,
-
-                                    size_t sampleCount,
-
-                                    void *context
-
-                                ) -> bool
-
-                                {
-
-                                    bool *speakerStarted =
-
-                                        static_cast<bool *>(
-
-                                            context
-
-                                        );
-
-
-                                    if (speakerStarted == nullptr)
-
-                                    {
-
-                                        return false;
-
-                                    }
-
-
-                                    if (!*speakerStarted)
-
-                                    {
-
-                                        if (
-
-                                            !AsterAudio.startSpeakerPlayback()
-
-                                        )
-
-                                        {
-
-                                            return false;
-
-                                        }
-
-
-                                        *speakerStarted =
-
-                                            true;
-
-                                    }
-
-
-                                    return
-
-                                        AsterAudio.playMonoPcm(
-
-                                            samples,
-
-                                            sampleCount,
-
-                                            2000
-
-                                        );
-
-                                },
-
-                                &speakerStartedForTts
-
-                            );
-
-
-                        // Aunque falle el stream a mitad,
-                        // nunca dejar el PA encendido.
-
-                        if (speakerStartedForTts)
-
-                        {
-
-                            AsterAudio.stopSpeakerPlayback();
-
-                        }
-
-
-                        if (speechOk)
-
-                        {
-
-                            Serial.println(
-
-                                "[Pocket] Voz de Asty reproducida."
-
-                            );
-
-                        }
-
-                        else
-
-                        {
-
-                            Serial.println(
-
-                                "[Pocket] ERROR reproduciendo TTS de Asty."
-
-                            );
-
-                        }
-
                     }
+
                 }
             }
 

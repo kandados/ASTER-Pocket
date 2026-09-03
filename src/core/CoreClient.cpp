@@ -182,16 +182,21 @@ bool CoreClientClass::createConversation(
 {
     conversationId = "";
 
-
-    WiFiClientSecure tlsClient;
-
-    HTTPClient http;
-
-
     const String url =
         String(ASTER_CORE_URL) +
         "/conversations";
 
+    JsonDocument request;
+
+    request["title"] =
+        "A.S.T.E.R. Pocket remoto v0.6";
+
+    String body;
+
+    serializeJson(
+        request,
+        body
+    );
 
     Serial.println();
     Serial.print(
@@ -202,134 +207,128 @@ bool CoreClientClass::createConversation(
         url
     );
 
+    for (uint8_t attempt = 1; attempt <= 2; ++attempt)
+    {
+        WiFiClientSecure tlsClient;
+        HTTPClient http;
 
-    if (
-        !beginSecureRequest(
-            http,
-            tlsClient,
-            url
+        if (
+            !beginSecureRequest(
+                http,
+                tlsClient,
+                url
+            )
         )
-    )
-    {
-        return false;
-    }
+        {
+            return false;
+        }
 
-
-    http.addHeader(
-        "Content-Type",
-        "application/json"
-    );
-
-
-    addAuthenticationHeader(
-        http
-    );
-
-
-    JsonDocument request;
-
-
-    request["title"] =
-        "A.S.T.E.R. Pocket remoto v0.6";
-
-
-    String body;
-
-
-    serializeJson(
-        request,
-        body
-    );
-
-
-    const int status =
-        http.POST(
-            body
+        http.addHeader(
+            "Content-Type",
+            "application/json"
         );
 
-
-    const String response =
-        http.getString();
-
-
-    http.end();
-
-
-    Serial.print(
-        "[CoreClient] Crear conversación HTTP: "
-    );
-
-    Serial.println(
-        status
-    );
-
-
-    if (status != 201)
-    {
-        Serial.print(
-            "[CoreClient] ERROR response: "
+        addAuthenticationHeader(
+            http
         );
+
+        const int status =
+            http.POST(
+                body
+            );
+
+        const String response =
+            (
+                status > 0
+                ? http.getString()
+                : String()
+            );
+
+        http.end();
+
+        Serial.printf(
+            "[CoreClient] Crear conversación HTTP: %d "
+            "(intento %u/2)\n",
+            status,
+            static_cast<unsigned>(attempt)
+        );
+
+        if (status == 201)
+        {
+            JsonDocument document;
+
+            const DeserializationError error =
+                deserializeJson(
+                    document,
+                    response
+                );
+
+            if (error)
+            {
+                Serial.print(
+                    "[CoreClient] ERROR JSON conversación: "
+                );
+
+                Serial.println(
+                    error.c_str()
+                );
+
+                return false;
+            }
+
+            const char *id =
+                document["id"];
+
+            if (id == nullptr)
+            {
+                Serial.println(
+                    "[CoreClient] ERROR: Core no devolvió conversation ID."
+                );
+
+                return false;
+            }
+
+            conversationId =
+                String(id);
+
+            Serial.print(
+                "[CoreClient] Conversation ID: "
+            );
+
+            Serial.println(
+                conversationId
+            );
+
+            return true;
+        }
+
+        // Solo reintentamos errores de transporte/TLS.
+        // Un HTTP real de Core no se repite a ciegas.
+        if (
+            status >= 0 ||
+            attempt >= 2
+        )
+        {
+            Serial.print(
+                "[CoreClient] ERROR response: "
+            );
+
+            Serial.println(
+                response
+            );
+
+            return false;
+        }
 
         Serial.println(
-            response
+            "[CoreClient] Fallo de transporte; "
+            "reintentando conexión HTTPS..."
         );
 
-        return false;
+        delay(500);
     }
 
-
-    JsonDocument document;
-
-
-    const DeserializationError error =
-        deserializeJson(
-            document,
-            response
-        );
-
-
-    if (error)
-    {
-        Serial.print(
-            "[CoreClient] ERROR JSON conversación: "
-        );
-
-        Serial.println(
-            error.c_str()
-        );
-
-        return false;
-    }
-
-
-    const char *id =
-        document["id"];
-
-
-    if (id == nullptr)
-    {
-        Serial.println(
-            "[CoreClient] ERROR: Core no devolvió conversation ID."
-        );
-
-        return false;
-    }
-
-
-    conversationId =
-        String(id);
-
-
-    Serial.print(
-        "[CoreClient] Conversation ID: "
-    );
-
-    Serial.println(
-        conversationId
-    );
-
-
-    return true;
+    return false;
 }
 
 
@@ -1212,7 +1211,10 @@ private:
             return;
         }
 
-        if (_result.rawResponse.length() < 4096)
+        if (
+            _result.rawResponse.length() < 4096 &&
+            _line.length() < 1024
+        )
         {
             _result.rawResponse += _line;
             _result.rawResponse += '\n';
@@ -1341,6 +1343,98 @@ private:
             return;
         }
 
+        if (eventType == "text_done")
+        {
+            emit(
+                CoreAudioStreamEventType::TextDone,
+                String()
+            );
+
+            return;
+        }
+
+        if (eventType == "audio_start")
+        {
+            Serial.printf(
+                "[CoreClient] audio_start tras %lu ms\n",
+                static_cast<unsigned long>(
+                    millis() -
+                    _requestStartedAt
+                )
+            );
+
+            emit(
+                CoreAudioStreamEventType::AudioStart,
+                String()
+            );
+
+            return;
+        }
+
+        if (eventType == "audio_pcm")
+        {
+            const char *audioData =
+                document["data"];
+
+            if (audioData == nullptr)
+            {
+                Serial.println(
+                    "[CoreClient] ERROR: audio_pcm sin data."
+                );
+
+                _parseFailed = true;
+                return;
+            }
+
+            if (!_firstAudioLogged)
+            {
+                _firstAudioLogged = true;
+
+                Serial.printf(
+                    "[CoreClient] Primer PCM multiplexado tras %lu ms\n",
+                    static_cast<unsigned long>(
+                        millis() -
+                        _requestStartedAt
+                    )
+                );
+            }
+
+            emit(
+                CoreAudioStreamEventType::AudioPcm,
+                String(audioData)
+            );
+
+            return;
+        }
+
+        if (eventType == "audio_end")
+        {
+            emit(
+                CoreAudioStreamEventType::AudioEnd,
+                String()
+            );
+
+            return;
+        }
+
+        if (eventType == "audio_error")
+        {
+            Serial.print(
+                "[CoreClient] ERROR TTS multiplexado: "
+            );
+
+            Serial.println(
+                content
+            );
+
+            emit(
+                CoreAudioStreamEventType::AudioError,
+                content
+            );
+
+            return;
+        }
+
         if (eventType == "error")
         {
             _serverError = true;
@@ -1439,6 +1533,9 @@ private:
         false;
 
     bool _firstDeltaLogged =
+        false;
+
+    bool _firstAudioLogged =
         false;
 };
 
@@ -1948,6 +2045,15 @@ bool CoreClientClass::sendAudioStream(
         "pcm_s16le"
     );
 
+    http.addHeader(
+        "X-Aster-Response-Audio",
+        "pcm-base64"
+    );
+
+    Serial.println(
+        "[CoreClient] Voz multiplexada solicitada: pcm-base64"
+    );
+
     addAuthenticationHeader(
         http
     );
@@ -2100,6 +2206,135 @@ bool CoreClientClass::sendAudioStream(
     );
 
     return true;
+}
+
+
+bool CoreClientClass::streamSpeechText(
+    const String &conversationId,
+    const String &text,
+    CoreSpeechPcmCallback callback,
+    void *context
+)
+{
+    String normalizedText = text;
+    normalizedText.trim();
+
+    if (
+        conversationId.length() == 0 ||
+        normalizedText.length() == 0 ||
+        callback == nullptr
+    )
+    {
+        Serial.println(
+            "[CoreClient] ERROR: parametros TTS texto invalidos."
+        );
+        return false;
+    }
+
+    const uint32_t speechRequestStartedAt =
+        millis();
+
+    WiFiClientSecure tlsClient;
+    HTTPClient http;
+
+    const String url =
+        String(ASTER_CORE_URL) +
+        "/conversations/" +
+        conversationId +
+        "/speech/stream";
+
+    JsonDocument requestDocument;
+    requestDocument["text"] = normalizedText;
+
+    String requestBody;
+    serializeJson(
+        requestDocument,
+        requestBody
+    );
+
+    Serial.println();
+    Serial.print("[CoreClient] POST ");
+    Serial.println(url);
+    Serial.print("[CoreClient] TTS parcial: ");
+    Serial.println(normalizedText);
+
+    if (
+        !beginSecureRequest(
+            http,
+            tlsClient,
+            url
+        )
+    )
+    {
+        return false;
+    }
+
+    http.addHeader(
+        "Accept",
+        "audio/x-pcm"
+    );
+
+    http.addHeader(
+        "Content-Type",
+        "application/json"
+    );
+
+    addAuthenticationHeader(http);
+
+    const uint32_t startedAt =
+        millis();
+
+    const int status =
+        http.POST(requestBody);
+
+    Serial.print(
+        "[CoreClient] Speech text HTTP: "
+    );
+    Serial.println(status);
+
+    if (status != 200)
+    {
+        const String response =
+            http.getString();
+
+        Serial.print(
+            "[CoreClient] ERROR speech text: "
+        );
+        Serial.println(response);
+
+        http.end();
+        return false;
+    }
+
+    CoreSpeechPcmSink sink(
+        callback,
+        context,
+        speechRequestStartedAt
+    );
+
+    const int streamedBytes =
+        http.writeToStream(&sink);
+
+    const uint32_t elapsed =
+        millis() - startedAt;
+
+    const bool validPcm =
+        streamedBytes >= 0 &&
+        sink.finish();
+
+    Serial.printf(
+        "[CoreClient] Speech text recibido: %lu bytes en %lu ms\n",
+        static_cast<unsigned long>(
+            sink.bytesReceived()
+        ),
+        static_cast<unsigned long>(
+            elapsed
+        )
+    );
+
+    http.end();
+
+    return validPcm;
 }
 
 

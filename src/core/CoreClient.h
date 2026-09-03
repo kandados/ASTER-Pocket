@@ -19,6 +19,11 @@ enum class CoreAudioStreamEventType : uint8_t
     Transcription,
     Start,
     Delta,
+    TextDone,
+    AudioStart,
+    AudioPcm,
+    AudioEnd,
+    AudioError,
     Done,
     Error
 };
@@ -75,6 +80,13 @@ public:
         uint32_t sampleRate,
         CoreAudioTurnResult &result,
         CoreAudioStreamCallback callback,
+        void *context = nullptr
+    );
+
+    bool streamSpeechText(
+        const String &conversationId,
+        const String &text,
+        CoreSpeechPcmCallback callback,
         void *context = nullptr
     );
 
