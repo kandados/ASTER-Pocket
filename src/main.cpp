@@ -1693,6 +1693,33 @@ void loop()
         AsterDisplay.showReply(
             answer.c_str()
         );
+
+        Serial.println(
+            "[Pocket] Iniciando TTS de respuesta escrita..."
+        );
+
+        bool textSpeakerStarted = false;
+
+        const bool textSpeechOk =
+            CoreClient.streamSpeechText(
+                conversationId,
+                answer,
+                playSpeechPcm,
+                &textSpeakerStarted
+            );
+
+        if (textSpeakerStarted)
+        {
+            AsterAudio.stopSpeakerPlayback();
+        }
+
+        Serial.print(
+            "[Pocket] TTS respuesta escrita: "
+        );
+
+        Serial.println(
+            textSpeechOk ? "OK" : "ERROR"
+        );
     }
 
 

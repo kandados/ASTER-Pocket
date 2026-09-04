@@ -1681,7 +1681,7 @@ void AsterDisplayClass::showReply(
 
     lv_obj_set_scrollbar_mode(
         responsePanel,
-        LV_SCROLLBAR_MODE_AUTO
+        LV_SCROLLBAR_MODE_OFF
     );
 
 
