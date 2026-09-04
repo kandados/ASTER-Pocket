@@ -7,6 +7,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include "services/ota/AsterOTA.h"
+#include "services/power/AsterBattery.h"
 #include <time.h>
 #include <esp_heap_caps.h>
 #include <esp32-hal-psram.h>
@@ -1061,6 +1062,18 @@ void setup()
 
 
     // -----------------------------------------------------
+    // Batería / PMIC AXP2101
+    // -----------------------------------------------------
+
+    if (!AsterBattery.begin())
+    {
+        Serial.println(
+            "[Pocket] AVISO: telemetría de batería no disponible."
+        );
+    }
+
+
+    // -----------------------------------------------------
     // Micrófonos / ES7210
     // -----------------------------------------------------
 
@@ -1223,6 +1236,47 @@ void loop()
     AsterOTA.handle();
 
     AsterDisplay.update();
+
+
+    // -----------------------------------------------------
+    // Telemetría de batería
+    // -----------------------------------------------------
+
+    static uint32_t lastBatteryUiUpdateAt =
+        0;
+
+    const uint32_t batteryUiNow =
+        millis();
+
+    if (
+        AsterBattery.ready() &&
+        (
+            lastBatteryUiUpdateAt == 0 ||
+            batteryUiNow - lastBatteryUiUpdateAt >= 5000
+        )
+    )
+    {
+        lastBatteryUiUpdateAt =
+            batteryUiNow;
+
+        AsterBatteryStatus batteryStatus;
+
+        if (
+            AsterBattery.read(
+                batteryStatus
+            ) &&
+            batteryStatus.valid
+        )
+        {
+            AsterDisplay.setBatteryStatus(
+                batteryStatus.percent,
+                batteryStatus.batteryVoltageMv,
+                batteryStatus.batteryConnected,
+                batteryStatus.charging,
+                batteryStatus.vbusConnected
+            );
+        }
+    }
 
     // -----------------------------------------------------
     // Volumen táctil

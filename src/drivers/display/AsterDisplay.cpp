@@ -75,6 +75,42 @@ static bool volumeScreenRequested =
 static bool chatScreenRequested =
     false;
 
+static bool batteryScreenRequested =
+    false;
+
+static lv_obj_t *batteryButtonLabel =
+    nullptr;
+
+static lv_obj_t *batteryPercentLabel =
+    nullptr;
+
+static lv_obj_t *batteryVoltageLabel =
+    nullptr;
+
+static lv_obj_t *batteryStateLabel =
+    nullptr;
+
+static lv_obj_t *batterySourceLabel =
+    nullptr;
+
+static bool batteryStatusKnown =
+    false;
+
+static bool currentBatteryConnected =
+    false;
+
+static bool currentBatteryCharging =
+    false;
+
+static bool currentBatteryVbus =
+    false;
+
+static uint8_t currentBatteryPercent =
+    0;
+
+static uint16_t currentBatteryVoltageMv =
+    0;
+
 static lv_obj_t *replyStreamPanel =
     nullptr;
 
@@ -87,6 +123,155 @@ static uint32_t replyStreamLastPaintAt =
     0;
 
 
+
+
+
+// ---------------------------------------------------------
+// Estado visual de batería
+// ---------------------------------------------------------
+
+static void refreshBatteryLabels()
+{
+    char buffer[40];
+
+    if (batteryButtonLabel != nullptr)
+    {
+        if (batteryStatusKnown && currentBatteryConnected)
+        {
+            snprintf(
+                buffer,
+                sizeof(buffer),
+                "%u%%",
+                static_cast<unsigned>(
+                    currentBatteryPercent
+                )
+            );
+        }
+        else
+        {
+            snprintf(
+                buffer,
+                sizeof(buffer),
+                "--%%"
+            );
+        }
+
+        lv_label_set_text(
+            batteryButtonLabel,
+            buffer
+        );
+    }
+
+
+    if (batteryPercentLabel != nullptr)
+    {
+        if (batteryStatusKnown && currentBatteryConnected)
+        {
+            snprintf(
+                buffer,
+                sizeof(buffer),
+                "%u %%",
+                static_cast<unsigned>(
+                    currentBatteryPercent
+                )
+            );
+        }
+        else
+        {
+            snprintf(
+                buffer,
+                sizeof(buffer),
+                "-- %%"
+            );
+        }
+
+        lv_label_set_text(
+            batteryPercentLabel,
+            buffer
+        );
+    }
+
+
+    if (batteryVoltageLabel != nullptr)
+    {
+        if (batteryStatusKnown && currentBatteryConnected)
+        {
+            snprintf(
+                buffer,
+                sizeof(buffer),
+                "%u.%03u V",
+                static_cast<unsigned>(
+                    currentBatteryVoltageMv / 1000
+                ),
+                static_cast<unsigned>(
+                    currentBatteryVoltageMv % 1000
+                )
+            );
+        }
+        else
+        {
+            snprintf(
+                buffer,
+                sizeof(buffer),
+                "--.--- V"
+            );
+        }
+
+        lv_label_set_text(
+            batteryVoltageLabel,
+            buffer
+        );
+    }
+
+
+    if (batteryStateLabel != nullptr)
+    {
+        const char *state = "LEYENDO...";
+
+        if (batteryStatusKnown)
+        {
+            if (!currentBatteryConnected)
+            {
+                state = "SIN BATERIA";
+            }
+            else if (currentBatteryCharging)
+            {
+                state = "CARGANDO";
+            }
+            else if (currentBatteryVbus)
+            {
+                state = "USB / NO CARGA";
+            }
+            else
+            {
+                state = "EN BATERIA";
+            }
+        }
+
+        lv_label_set_text(
+            batteryStateLabel,
+            state
+        );
+    }
+
+
+    if (batterySourceLabel != nullptr)
+    {
+        const char *source = "Esperando lectura";
+
+        if (batteryStatusKnown)
+        {
+            source = currentBatteryVbus
+                ? "USB conectado"
+                : "Sin USB";
+        }
+
+        lv_label_set_text(
+            batterySourceLabel,
+            source
+        );
+    }
+}
 
 
 // ---------------------------------------------------------
@@ -226,6 +411,21 @@ static lv_obj_t *prepareScreen()
     volumeValueLabel =
         nullptr;
 
+    batteryButtonLabel =
+        nullptr;
+
+    batteryPercentLabel =
+        nullptr;
+
+    batteryVoltageLabel =
+        nullptr;
+
+    batteryStateLabel =
+        nullptr;
+
+    batterySourceLabel =
+        nullptr;
+
     replyStreamPanel =
         nullptr;
 
@@ -361,6 +561,57 @@ static void newQuestionEvent(
 
 
     AsterDisplay.showChatInput();
+}
+
+
+
+// ---------------------------------------------------------
+// Batería
+// ---------------------------------------------------------
+
+static void batteryButtonEvent(
+    lv_event_t *event
+)
+{
+    if (
+        lv_event_get_code(event) !=
+        LV_EVENT_CLICKED
+    )
+    {
+        return;
+    }
+
+    batteryScreenRequested =
+        true;
+
+    volumeScreenRequested =
+        false;
+
+    chatScreenRequested =
+        false;
+}
+
+
+static void batteryBackEvent(
+    lv_event_t *event
+)
+{
+    if (
+        lv_event_get_code(event) !=
+        LV_EVENT_CLICKED
+    )
+    {
+        return;
+    }
+
+    chatScreenRequested =
+        true;
+
+    batteryScreenRequested =
+        false;
+
+    volumeScreenRequested =
+        false;
 }
 
 
@@ -954,6 +1205,60 @@ void AsterDisplayClass::showChatInput()
     );
 
 
+
+    // -----------------------------------------------------
+    // Botón batería
+    // -----------------------------------------------------
+
+    lv_obj_t *batteryButton =
+        lv_btn_create(
+            screen
+        );
+
+    lv_obj_set_size(
+        batteryButton,
+        60,
+        40
+    );
+
+    lv_obj_align(
+        batteryButton,
+        LV_ALIGN_TOP_MID,
+        92,
+        167
+    );
+
+    lv_obj_set_style_radius(
+        batteryButton,
+        18,
+        0
+    );
+
+    lv_obj_add_event_cb(
+        batteryButton,
+        batteryButtonEvent,
+        LV_EVENT_CLICKED,
+        nullptr
+    );
+
+    batteryButtonLabel =
+        lv_label_create(
+            batteryButton
+        );
+
+    lv_obj_set_style_text_font(
+        batteryButtonLabel,
+        &aster_montserrat_24,
+        0
+    );
+
+    lv_obj_center(
+        batteryButtonLabel
+    );
+
+    refreshBatteryLabels();
+
+
     messageInput =
         lv_textarea_create(
             screen
@@ -1012,7 +1317,7 @@ void AsterDisplayClass::showChatInput()
 
     lv_obj_set_size(
         sendButton,
-        160,
+        120,
         48
     );
 
@@ -1120,6 +1425,203 @@ void AsterDisplayClass::showChatInput()
 // ---------------------------------------------------------
 // Control provisional de volumen
 // ---------------------------------------------------------
+
+
+// ---------------------------------------------------------
+// Pantalla de batería
+// ---------------------------------------------------------
+
+void AsterDisplayClass::showBatteryStatus()
+{
+    lv_obj_t *screen =
+        prepareScreen();
+
+
+    lv_obj_t *title =
+        lv_label_create(
+            screen
+        );
+
+    lv_label_set_text(
+        title,
+        "BATERIA"
+    );
+
+    lv_obj_set_style_text_color(
+        title,
+        lv_color_white(),
+        0
+    );
+
+    lv_obj_set_style_text_font(
+        title,
+        &lv_font_montserrat_36,
+        0
+    );
+
+    lv_obj_align(
+        title,
+        LV_ALIGN_TOP_MID,
+        0,
+        52
+    );
+
+
+    batteryPercentLabel =
+        lv_label_create(
+            screen
+        );
+
+    lv_obj_set_style_text_color(
+        batteryPercentLabel,
+        lv_color_white(),
+        0
+    );
+
+    lv_obj_set_style_text_font(
+        batteryPercentLabel,
+        &lv_font_montserrat_36,
+        0
+    );
+
+    lv_obj_align(
+        batteryPercentLabel,
+        LV_ALIGN_CENTER,
+        0,
+        -70
+    );
+
+
+    batteryVoltageLabel =
+        lv_label_create(
+            screen
+        );
+
+    lv_obj_set_style_text_color(
+        batteryVoltageLabel,
+        lv_color_white(),
+        0
+    );
+
+    lv_obj_set_style_text_font(
+        batteryVoltageLabel,
+        &aster_montserrat_24,
+        0
+    );
+
+    lv_obj_align(
+        batteryVoltageLabel,
+        LV_ALIGN_CENTER,
+        0,
+        -10
+    );
+
+
+    batteryStateLabel =
+        lv_label_create(
+            screen
+        );
+
+    lv_obj_set_style_text_color(
+        batteryStateLabel,
+        lv_color_white(),
+        0
+    );
+
+    lv_obj_set_style_text_font(
+        batteryStateLabel,
+        &aster_montserrat_24,
+        0
+    );
+
+    lv_obj_align(
+        batteryStateLabel,
+        LV_ALIGN_CENTER,
+        0,
+        45
+    );
+
+
+    batterySourceLabel =
+        lv_label_create(
+            screen
+        );
+
+    lv_obj_set_style_text_color(
+        batterySourceLabel,
+        lv_color_white(),
+        0
+    );
+
+    lv_obj_set_style_text_font(
+        batterySourceLabel,
+        &aster_montserrat_24,
+        0
+    );
+
+    lv_obj_align(
+        batterySourceLabel,
+        LV_ALIGN_CENTER,
+        0,
+        85
+    );
+
+
+    lv_obj_t *backButton =
+        lv_btn_create(
+            screen
+        );
+
+    lv_obj_set_size(
+        backButton,
+        180,
+        52
+    );
+
+    lv_obj_align(
+        backButton,
+        LV_ALIGN_BOTTOM_MID,
+        0,
+        -35
+    );
+
+    lv_obj_add_event_cb(
+        backButton,
+        batteryBackEvent,
+        LV_EVENT_CLICKED,
+        nullptr
+    );
+
+    lv_obj_t *backLabel =
+        lv_label_create(
+            backButton
+        );
+
+    lv_label_set_text(
+        backLabel,
+        "VOLVER"
+    );
+
+    lv_obj_set_style_text_font(
+        backLabel,
+        &aster_montserrat_24,
+        0
+    );
+
+    lv_obj_center(
+        backLabel
+    );
+
+
+    refreshBatteryLabels();
+
+    Serial.println(
+        "[AsterDisplay] Pantalla de bateria preparada."
+    );
+
+    lv_timer_handler();
+}
+
 
 void AsterDisplayClass::showVolumeControl()
 
@@ -1392,6 +1894,42 @@ void AsterDisplayClass::showVolumeControl()
 
     lv_timer_handler();
 
+}
+
+
+
+void AsterDisplayClass::setBatteryStatus(
+    uint8_t percent,
+    uint16_t batteryVoltageMv,
+    bool batteryConnected,
+    bool charging,
+    bool vbusConnected
+)
+{
+    if (percent > 100)
+    {
+        percent = 100;
+    }
+
+    batteryStatusKnown =
+        true;
+
+    currentBatteryPercent =
+        percent;
+
+    currentBatteryVoltageMv =
+        batteryVoltageMv;
+
+    currentBatteryConnected =
+        batteryConnected;
+
+    currentBatteryCharging =
+        charging;
+
+    currentBatteryVbus =
+        vbusConnected;
+
+    refreshBatteryLabels();
 }
 
 
@@ -1843,15 +2381,14 @@ void AsterDisplayClass::serviceUi()
 // ---------------------------------------------------------
 
 void AsterDisplayClass::update()
-
 {
-
     lv_timer_handler();
 
 
-    if (volumeScreenRequested)
-
+    if (batteryScreenRequested)
     {
+        batteryScreenRequested =
+            false;
 
         volumeScreenRequested =
             false;
@@ -1859,31 +2396,44 @@ void AsterDisplayClass::update()
         chatScreenRequested =
             false;
 
+        showBatteryStatus();
+
+        return;
+    }
+
+
+    if (volumeScreenRequested)
+    {
+        volumeScreenRequested =
+            false;
+
+        batteryScreenRequested =
+            false;
+
+        chatScreenRequested =
+            false;
 
         showVolumeControl();
 
         return;
-
     }
 
 
     if (chatScreenRequested)
-
     {
-
         chatScreenRequested =
             false;
 
         volumeScreenRequested =
             false;
 
+        batteryScreenRequested =
+            false;
 
         showChatInput();
 
         return;
-
     }
-
 }
 
 

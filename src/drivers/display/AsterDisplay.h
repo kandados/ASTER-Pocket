@@ -26,6 +26,16 @@ public:
         uint8_t &volume
     );
 
+    void setBatteryStatus(
+        uint8_t percent,
+        uint16_t batteryVoltageMv,
+        bool batteryConnected,
+        bool charging,
+        bool vbusConnected
+    );
+
+    void showBatteryStatus();
+
     void showReply(
         const char *reply
     );
